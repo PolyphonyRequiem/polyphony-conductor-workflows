@@ -1,43 +1,55 @@
-{% if open_questions_gate.output.answers is defined and open_questions_gate.output.answers %}
-## ⚠️ You Are Being Re-Invoked With User Answers
+{# ─────────────────────────────────────────────────────────────────────────
+   Re-entry handling
+   ─────────────────────────────────────────────────────────────────────────
+   This template runs under StrictUndefined, so EVERY attribute access in
+   guards must be chained from a known-defined root. `context.history` is
+   always defined (engine/context.py:185-205), so we drive the branching
+   off the most recent agent in history rather than off the per-source
+   output objects directly.
 
-You previously produced a plan with open questions. The user has now provided
-answers. Your job this iteration is to **refine the prior plan**, not regenerate
-it from scratch:
+   Mutually exclusive — newer routes take precedence so a re-entered
+   architect never sees stale signals from earlier loops.
+   ───────────────────────────────────────────────────────────────────── #}
+{% set last = context.history[-1] if context.history|length > 0 else "" %}
 
-1. **Read the user's answers carefully** (below) and treat them as authoritative
-   resolutions of the questions you previously raised.
-2. **Update the prior plan** to incorporate the answers — change scope, decisions,
-   structure, or content as needed to reflect them.
-3. **Do NOT re-ask the same questions** — they are now answered. If genuinely
-   new questions arise from the answers, you may raise those, but emit `[]`
-   for `open_questions` whenever possible so the workflow can proceed.
+{% if last == "plan_approval"
+      and plan_approval is defined
+      and plan_approval.output is defined
+      and plan_approval.output.selected == "revise"
+      and plan_approval.output.revision_feedback is defined
+      and plan_approval.output.revision_feedback %}
+## ⚠️ You Are Being Re-Invoked After Final-Approval Revision
 
-### User's answers
-{{ open_questions_gate.output.answers }}
+The user reviewed the approved plan and asked for revisions before seeding.
+Their feedback is authoritative. Your job this iteration is to **refine the
+prior plan**, not regenerate it.
 
-{% if architect.output.plan is defined %}
+1. **Address every point** in the revision feedback below.
+2. **Preserve unaffected sections** of the prior plan.
+3. **Emit `open_questions: []`** unless the feedback genuinely requires new
+   user input — re-asking already-answered questions will loop the workflow.
+
+### User's revision feedback
+{{ plan_approval.output.revision_feedback }}
+
+{% if architect is defined and architect.output is defined and architect.output.plan is defined %}
 ### Prior plan (refine, do not discard)
 ```markdown
 {{ architect.output.plan }}
 ```
 {% endif %}
 
-{% if architect.output.open_questions is defined %}
-### Questions you previously raised (now considered answered)
-{% for q in architect.output.open_questions %}
-- **{{ q.topic }}**: {{ q.detail }}
-{% endfor %}
-{% endif %}
-
 ---
 
-{% endif %}
-{% if review_group.outputs is defined %}
+{% elif last == "review_router"
+        and review_group is defined
+        and review_group.outputs is defined %}
 ## 🔁 You Are Being Re-Invoked After Review
 
-The reviewers scored your prior plan below the approval threshold. Refine the
-plan to address their feedback rather than regenerating from scratch.
+The reviewers scored your prior plan below the approval threshold. Address
+their feedback rather than regenerating from scratch. Emit
+`open_questions: []` unless the feedback raises a genuinely new ambiguity
+that the user must resolve.
 
 {% if review_group.outputs.technical_reviewer is defined %}
 ### Technical review (score: {{ review_group.outputs.technical_reviewer.score }})
@@ -49,11 +61,50 @@ plan to address their feedback rather than regenerating from scratch.
 {{ review_group.outputs.readability_reviewer.feedback }}
 {% endif %}
 
-{% if architect.output.plan is defined %}
+{% if architect is defined and architect.output is defined and architect.output.plan is defined %}
 ### Prior plan (refine, do not discard)
 ```markdown
 {{ architect.output.plan }}
 ```
+{% endif %}
+
+---
+
+{% elif last == "open_questions_gate"
+        and open_questions_gate is defined
+        and open_questions_gate.output is defined
+        and open_questions_gate.output.selected == "answer"
+        and open_questions_gate.output.answers is defined
+        and open_questions_gate.output.answers %}
+## ⚠️ You Are Being Re-Invoked With User Answers
+
+You previously produced a plan with open questions. The user has now provided
+answers. Your job this iteration is to **refine the prior plan**, not regenerate
+it from scratch:
+
+1. **Read the user's answers carefully** (below) and treat them as authoritative
+   resolutions of the questions you previously raised.
+2. **Update the prior plan** to incorporate the answers — change scope, decisions,
+   structure, or content as needed to reflect them.
+3. **Do NOT re-ask the same questions** — they are now answered. If genuinely
+   new questions arise from the answers, you may raise those, but **strongly
+   prefer emitting `open_questions: []`** so the workflow can proceed to review.
+
+### User's answers
+{{ open_questions_gate.output.answers }}
+
+{% if architect is defined and architect.output is defined and architect.output.plan is defined %}
+### Prior plan (refine, do not discard)
+```markdown
+{{ architect.output.plan }}
+```
+{% endif %}
+
+{% if architect is defined and architect.output is defined and architect.output.open_questions is defined %}
+### Questions you previously raised (now considered answered)
+{% for q in architect.output.open_questions %}
+- **{{ q.topic }}**: {{ q.detail }}
+{% endfor %}
 {% endif %}
 
 ---
