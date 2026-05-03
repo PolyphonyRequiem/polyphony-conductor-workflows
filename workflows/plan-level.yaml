@@ -311,20 +311,11 @@ agents:
 
   # ── Review group (parallel) ──────────────────────────────────────────────
   #
-  # Runs technical and readability reviews in parallel. Both reviewers
-  # score the plan 0-100 independently. Uses fail_fast to abort early
-  # if either reviewer encounters an error.
-  #
-  # Invariants:
-  #   Pre:  architect.output.plan is a complete plan artifact.
-  #   Post: Both reviewers have produced scores and feedback.
-  - name: review_group
-    parallel:
-      - technical_reviewer
-      - readability_reviewer
-    failure_mode: fail_fast
-    routes:
-      - to: review_router
+  # Defined as a top-level `parallel:` block at the bottom of this file,
+  # alongside `for_each:` and `agents:`. Conductor's schema requires
+  # parallel/for_each groups to be siblings of `agents:`, NOT nested
+  # inside agents-list items — see the parallel: block below for the
+  # actual definition.
 
   # ── Technical reviewer ───────────────────────────────────────────────────
   #
@@ -599,40 +590,9 @@ agents:
 
   # ── Plan children group (for_each) ──────────────────────────────────────
   #
-  # Self-recursion: invokes plan-level.yaml for each plannable child with
-  # depth+1. This enables any hierarchy depth to be planned with a single
-  # workflow file. Conductor enforces max_depth to prevent runaway recursion.
-  #
-  # Invariants:
-  #   Pre:  child_router.output.has_plannable_children == true.
-  #   Post: Each plannable child has been planned (or depth-limited).
-  - name: plan_children_group
-    for_each:
-      # Bare dotted path per M8 — Jinja `{{ }}` wrappers are rejected by
-      # `validate_source_format` (and even when accepted, are misleading).
-      source: child_router.output.plannable_children
-      as: child
-      max_concurrent: 3
-      failure_mode: continue_on_error
-      agent:
-        name: plan_child
-        type: workflow
-        workflow: ./plan-level.yaml
-        max_depth: 6
-        input_mapping:
-          work_item_id: "{{ child.id }}"
-          depth: "{{ workflow.input.depth + 1 }}"
-          max_depth: "{{ workflow.input.max_depth }}"
-          intent: "{{ workflow.input.intent }}"
-          user_plan_path: ""
-    routes:
-      # Per M8: parallel/for_each groups expose `outputs`/`errors`/`count`,
-      # NOT `failed_count`/`succeeded_count`. Derive failure presence from
-      # `errors | length`.
-      - to: plan_children_summary_gate
-        when: "{{ (plan_children_group.errors | length) > 0 }}"
-      - to: $end
-        when: "{{ (plan_children_group.errors | length) == 0 }}"
+  # Defined as a top-level `for_each:` block at the bottom of this file.
+  # Conductor's schema requires for_each groups to be siblings of `agents:`,
+  # NOT nested inside agents-list items — see the for_each: block below.
 
   # ── Plan children summary gate ───────────────────────────────────────────
   #
@@ -663,3 +623,79 @@ agents:
       - label: "✅ Acknowledge"
         value: acknowledge
         route: $end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Parallel groups
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Conductor's schema requires `parallel:` to be a top-level key (sibling of
+# `agents:`), NOT nested inside an agents-list item. Pydantic's AgentDef has
+# no `extra = "forbid"`, so misnesting silently drops the parallel field and
+# the wrapper is treated as a no-op `type: agent` that defaults to gpt-4o.
+# See dogfood_findings #8 (polyphony fix) and #9 (conductor schema hardening).
+
+parallel:
+  # ── Review group ─────────────────────────────────────────────────────────
+  #
+  # Runs technical and readability reviews in parallel. Both reviewers
+  # score the plan 0-100 independently. Uses fail_fast to abort early
+  # if either reviewer encounters an error.
+  #
+  # Invariants:
+  #   Pre:  architect.output.plan is a complete plan artifact.
+  #   Post: Both reviewers have produced scores and feedback.
+  - name: review_group
+    description: Parallel plan review (technical + readability)
+    agents:
+      - technical_reviewer
+      - readability_reviewer
+    failure_mode: fail_fast
+    routes:
+      - to: review_router
+
+# ─────────────────────────────────────────────────────────────────────────────
+# For-each groups
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Same constraint as parallel: must be a top-level key. Each entry requires
+# `type: for_each` as a discriminator (see ForEachDef.type in schema.py).
+
+for_each:
+  # ── Plan children group ──────────────────────────────────────────────────
+  #
+  # Self-recursion: invokes plan-level.yaml for each plannable child with
+  # depth+1. This enables any hierarchy depth to be planned with a single
+  # workflow file. Conductor enforces max_depth to prevent runaway recursion.
+  #
+  # Invariants:
+  #   Pre:  child_router.output.has_plannable_children == true.
+  #   Post: Each plannable child has been planned (or depth-limited).
+  - name: plan_children_group
+    type: for_each
+    description: Recursive per-child planning
+    # Bare dotted path per M8 — Jinja `{{ }}` wrappers are rejected by
+    # `validate_source_format` (and even when accepted, are misleading).
+    source: child_router.output.plannable_children
+    as: child
+    max_concurrent: 3
+    failure_mode: continue_on_error
+    agent:
+      name: plan_child
+      type: workflow
+      workflow: ./plan-level.yaml
+      max_depth: 6
+      input_mapping:
+        work_item_id: "{{ child.id }}"
+        depth: "{{ workflow.input.depth + 1 }}"
+        max_depth: "{{ workflow.input.max_depth }}"
+        intent: "{{ workflow.input.intent }}"
+        user_plan_path: ""
+    routes:
+      # Per M8: parallel/for_each groups expose `outputs`/`errors`/`count`,
+      # NOT `failed_count`/`succeeded_count`. Derive failure presence from
+      # `errors | length`.
+      - to: plan_children_summary_gate
+        when: "{{ (plan_children_group.errors | length) > 0 }}"
+      - to: $end
+        when: "{{ (plan_children_group.errors | length) == 0 }}"
