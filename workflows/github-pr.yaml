@@ -64,7 +64,7 @@ agents:
   #         output.feedback contains detailed review comments.
   - name: pr_reviewer
     type: agent
-    model: claude-opus-4-1m
+    model: claude-opus-4.7-1m-internal
     context_window: 1000000
     description: Review PR for correctness, quality, and requirement alignment
     tools:
@@ -175,7 +175,7 @@ agents:
   #   Post: Fixes are committed and pushed to the PR branch.
   - name: pr_fixer
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Address PR review feedback with targeted code fixes
     tools:
       - gh
@@ -330,7 +330,7 @@ agents:
   #   Post: PR is merged; output.merged and output.pr_url are set.
   - name: pr_merger
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Merge the approved PR via gh pr merge
     tools:
       - gh

@@ -49,7 +49,7 @@ output:
 agents:
   - name: pr_reviewer
     type: agent
-    model: claude-opus-4-1m
+    model: claude-opus-4.7-1m-internal
     context_window: 1000000
     description: Review PR
     prompt: "Review the PR"
@@ -71,7 +71,7 @@ agents:
         when: "{{ review_counter.output.under_limit == false }}"
   - name: pr_fixer
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Fix PR issues
     prompt: "Fix the PR issues. Max 10 iterations."
     routes:
@@ -88,7 +88,7 @@ agents:
         route: $end
   - name: pr_merger
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Merge PR
     prompt: "Merge the PR"
     routes:
@@ -121,7 +121,7 @@ output:
 agents:
   - name: pr_reviewer
     type: agent
-    model: claude-opus-4-1m
+    model: claude-opus-4.7-1m-internal
     context_window: 1000000
     description: Review PR
     prompt: "Review the PR"
@@ -143,7 +143,7 @@ agents:
         when: "{{ review_counter.output.under_limit == false }}"
   - name: pr_fixer
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Fix PR issues
     prompt: "Fix the PR issues. Max 10 iterations."
     routes:
@@ -160,7 +160,7 @@ agents:
         route: $end
   - name: pr_merger
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Merge PR
     prompt: "Merge the PR"
     routes:
@@ -205,7 +205,7 @@ agents:
         when: "{{ review_counter.output.under_limit == false }}"
   - name: pr_fixer
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Fix PR issues
     prompt: "Fix the PR issues. Max 10 iterations."
     routes:
@@ -222,7 +222,7 @@ agents:
         route: $end
   - name: pr_merger
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Merge PR
     prompt: "Merge the PR"
     routes:
@@ -256,7 +256,7 @@ output:
 agents:
   - name: pr_reviewer
     type: agent
-    model: claude-opus-4-1m
+    model: claude-opus-4.7-1m-internal
     context_window: 1000000
     description: Review PR
     prompt: "Review the PR"
@@ -276,7 +276,7 @@ agents:
         when: "{{ review_counter.output.under_limit == false }}"
   - name: pr_fixer
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Fix PR issues
     prompt: "Fix the PR issues. Max 10 iterations."
     routes:
@@ -320,7 +320,7 @@ output:
 agents:
   - name: pr_reviewer
     type: agent
-    model: claude-opus-4-1m
+    model: claude-opus-4.7-1m-internal
     context_window: 1000000
     description: Review PR
     prompt: "Review the PR. Max 10 iterations."
@@ -342,14 +342,14 @@ agents:
         when: "{{ review_counter.output.under_limit == false }}"
   - name: pr_fixer
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Fix PR issues
     prompt: "Fix the PR issues"
     routes:
       - to: pr_reviewer
   - name: pr_merger
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Merge PR
     prompt: "Merge the PR"
     routes:
@@ -383,7 +383,7 @@ output:
 agents:
   - name: pr_reviewer
     type: agent
-    model: claude-opus-4-1m
+    model: claude-opus-4.7-1m-internal
     context_window: 1000000
     description: Review PR
     prompt: "Review the PR. Max 10 iterations."
@@ -405,7 +405,7 @@ agents:
         when: "{{ review_counter.output.under_limit == false }}"
   - name: pr_fixer
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Fix PR issues
     prompt: "Fix the PR issues"
     routes:
@@ -419,7 +419,7 @@ agents:
         route: $end
   - name: pr_merger
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Merge PR
     prompt: "Merge the PR"
     routes:
@@ -453,7 +453,7 @@ output:
 agents:
   - name: pr_reviewer
     type: agent
-    model: claude-opus-4-1m
+    model: claude-opus-4.7-1m-internal
     context_window: 1000000
     description: Review PR
     prompt: "Review the PR. Max 10 iterations."
@@ -475,7 +475,7 @@ agents:
         when: "{{ review_counter.output.under_limit == false }}"
   - name: pr_fixer
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Fix PR issues
     prompt: "Fix the PR issues"
     routes:
@@ -492,7 +492,7 @@ agents:
         route: $end
   - name: pr_merger
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Merge PR
     prompt: "Merge the PR"
     routes:
@@ -526,7 +526,7 @@ output:
 agents:
   - name: pr_reviewer
     type: agent
-    model: claude-opus-4-1m
+    model: claude-opus-4.7-1m-internal
     context_window: 1000000
     description: Review PR
     prompt: "Review the PR. Max 10 iterations."
@@ -537,7 +537,7 @@ agents:
         when: "{{ pr_reviewer.output.verdict == 'approved' }}"
   - name: pr_fixer
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Fix PR issues
     prompt: "Fix the PR issues"
     routes:
@@ -554,7 +554,7 @@ agents:
         route: $end
   - name: pr_merger
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Merge PR
     prompt: "Merge the PR"
     routes:
@@ -588,7 +588,7 @@ output:
 agents:
   - name: pr_reviewer
     type: agent
-    model: claude-opus-4-1m
+    model: claude-opus-4.7-1m-internal
     context_window: 1000000
     description: Review PR
     prompt: "Review the PR"
@@ -610,7 +610,7 @@ agents:
         when: "{{ review_counter.output.under_limit == false }}"
   - name: pr_fixer
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Fix PR issues
     prompt: "Fix the PR issues"
     routes:
@@ -630,7 +630,7 @@ agents:
         route: $end
   - name: pr_merger
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Merge PR
     prompt: "Merge the PR"
     routes:

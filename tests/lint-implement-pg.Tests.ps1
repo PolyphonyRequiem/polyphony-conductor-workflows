@@ -56,7 +56,7 @@ agents:
         when: "{{ task_router.output.action == 'all_tasks_done' }}"
   - name: coder
     type: agent
-    model: claude-opus-4-1m
+    model: claude-opus-4.7-1m-internal
     context_window: 1000000
     description: Implement a single task
     prompt: "Implement the task"
@@ -64,14 +64,14 @@ agents:
       - to: reducer_code
   - name: reducer_code
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Summarize code changes
     prompt: "Summarize changes"
     routes:
       - to: task_reviewer
   - name: task_reviewer
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Review task implementation
     prompt: "Review the implementation"
     routes:
@@ -109,14 +109,14 @@ agents:
         route: $end
   - name: reducer_issue
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Summarize issue-level work
     prompt: "Summarize PG work"
     routes:
       - to: issue_reviewer
   - name: issue_reviewer
     type: agent
-    model: claude-opus-4-1m
+    model: claude-opus-4.7-1m-internal
     context_window: 1000000
     description: Review issue-level work
     prompt: "Review the PG"
@@ -137,7 +137,7 @@ agents:
         route: task_router
   - name: pr_submit
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Create PR
     prompt: "Create the PR"
     routes:
@@ -227,7 +227,7 @@ agents:
         }
 
         It 'Fails when coder uses wrong model' {
-            $yaml = ($script:ValidYaml) -replace '(name: coder[\s\S]*?model: )claude-opus-4-1m', '$1claude-sonnet-4-20250514'
+            $yaml = ($script:ValidYaml) -replace '(name: coder[\s\S]*?model: )claude-opus-4.7-1m-internal', '$1claude-sonnet-4.6'
             Set-Content (Join-Path $script:WorkflowsDir 'implement-pg.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-pg.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
@@ -243,7 +243,7 @@ agents:
         }
 
         It 'Fails when issue_reviewer uses wrong model' {
-            $yaml = ($script:ValidYaml) -replace '(name: issue_reviewer[\s\S]*?model: )claude-opus-4-1m', '$1claude-sonnet-4-20250514'
+            $yaml = ($script:ValidYaml) -replace '(name: issue_reviewer[\s\S]*?model: )claude-opus-4.7-1m-internal', '$1claude-sonnet-4.6'
             Set-Content (Join-Path $script:WorkflowsDir 'implement-pg.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-pg.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1

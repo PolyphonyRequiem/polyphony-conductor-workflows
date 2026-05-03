@@ -222,7 +222,7 @@ agents:
   #   Post: output.plan contains the plan artifact; output.open_questions may be non-empty.
   - name: architect
     type: agent
-    model: claude-opus-4-1m
+    model: claude-opus-4.7-1m-internal
     context_window: 1000000
     description: Create or refine a plan using type-specific context and decomposition guidance
     tools:
@@ -301,7 +301,7 @@ agents:
   #   Post: output.score (0-100) and output.feedback (string) are set.
   - name: technical_reviewer
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Review plan for technical soundness and feasibility
     prompt: |
       You are a technical reviewer for an SDLC planning workflow.
@@ -358,7 +358,7 @@ agents:
   #   Post: output.score (0-100) and output.feedback (string) are set.
   - name: readability_reviewer
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Review plan for clarity and completeness
     prompt: |
       You are a readability reviewer for an SDLC planning workflow.
@@ -489,7 +489,7 @@ agents:
   #   Post: Child work items are created in ADO; output.seeded_count is set.
   - name: seeder
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Create child work items from the approved plan
     tools:
       - twig

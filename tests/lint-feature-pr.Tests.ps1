@@ -124,7 +124,7 @@ agents:
 
   - name: remediation_planner
     type: agent
-    model: claude-opus-4-20250514
+    model: claude-opus-4.7
     description: Create addendum plan for remediation
     prompt: "Plan remediation"
     routes:
@@ -132,7 +132,7 @@ agents:
 
   - name: remediation_seeder
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Seed remediation work items
     prompt: "Seed remediation tasks"
     routes:

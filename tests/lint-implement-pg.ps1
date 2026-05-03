@@ -104,10 +104,10 @@ foreach ($line in $lines) {
     if ($inCoder) { $coderBlock += $line + "`n" }
     if ($inCoder -and $coderBlock.Length -gt 50 -and $line -match '^\s*-\s*name:') { break }
 }
-if ($coderBlock -and $coderBlock -notmatch 'claude-opus-4-1m') {
+if ($coderBlock -and $coderBlock -notmatch 'claude-opus-4.7-1m-internal') {
     $violations += [PSCustomObject]@{
         Rule   = 'wrong-coder-model'
-        Detail = "Coder agent must use Opus 1M model (claude-opus-4-1m)"
+        Detail = "Coder agent must use Opus 1M model (claude-opus-4.7-1m-internal)"
     }
 }
 
@@ -130,10 +130,10 @@ foreach ($line in $lines) {
     if ($inIssueReviewer) { $issueReviewerBlock += $line + "`n" }
     if ($inIssueReviewer -and $issueReviewerBlock.Length -gt 50 -and $line -match '^\s*-\s*name:') { break }
 }
-if ($issueReviewerBlock -and $issueReviewerBlock -notmatch 'claude-opus-4-1m') {
+if ($issueReviewerBlock -and $issueReviewerBlock -notmatch 'claude-opus-4.7-1m-internal') {
     $violations += [PSCustomObject]@{
         Rule   = 'wrong-issue-reviewer-model'
-        Detail = "Issue reviewer must use Opus 1M model (claude-opus-4-1m) for cross-cutting review"
+        Detail = "Issue reviewer must use Opus 1M model (claude-opus-4.7-1m-internal) for cross-cutting review"
     }
 }
 
