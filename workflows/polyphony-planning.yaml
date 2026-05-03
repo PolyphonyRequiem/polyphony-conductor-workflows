@@ -160,7 +160,7 @@ agents:
   #   Post: Child work items are created in ADO; output.seeded_count is set.
   - name: work_tree_seeder
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Seed child work items from the approved plan
     tools:
       - twig

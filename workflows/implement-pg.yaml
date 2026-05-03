@@ -180,7 +180,7 @@ agents:
   #   Post: Code changes are committed to the PG branch for the task.
   - name: coder
     type: agent
-    model: claude-opus-4-1m
+    model: claude-opus-4.7-1m-internal
     context_window: 1000000
     description: Implement a single task with code changes committed to the PG branch
     tools:
@@ -238,7 +238,7 @@ agents:
   #   Post: output contains structured summary of changes for review.
   - name: reducer_code
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Summarize coder output into a structured review package
     tools:
       - filesystem
@@ -286,7 +286,7 @@ agents:
   #   Post: output.verdict is 'approved' or 'changes_requested'.
   - name: task_reviewer
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Review task implementation for correctness and quality
     tools:
       - twig
@@ -475,7 +475,7 @@ agents:
   #   Post: output contains issue-level summary for reviewer.
   - name: reducer_issue
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Summarize completed PG work at the issue level for review
     tools:
       - twig
@@ -525,7 +525,7 @@ agents:
   #   Post: output.verdict is 'approved' or 'changes_requested'.
   - name: issue_reviewer
     type: agent
-    model: claude-opus-4-1m
+    model: claude-opus-4.7-1m-internal
     context_window: 1000000
     description: Review completed PG at the issue level for cohesion and completeness
     tools:
@@ -640,7 +640,7 @@ agents:
   #   Post: PR is created; output.pr_number and output.pr_url are set.
   - name: pr_submit
     type: agent
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4.6
     description: Create the PG pull request targeting the feature branch
     tools:
       - twig
