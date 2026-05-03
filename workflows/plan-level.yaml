@@ -563,7 +563,11 @@ agents:
     args:
       - "-NoProfile"
       - "-File"
-      - "scripts/review-router.ps1"
+      # workflow.dir resolves to the directory of the running workflow file
+      # (engine/workflow.py:331). Required because conductor invokes pwsh
+      # from its own cwd, not the registry root, so 'scripts/foo.ps1' alone
+      # would not resolve at runtime.
+      - "{{ workflow.dir }}/../scripts/review-router.ps1"
       - "-TechReviewerJson"
       - "{{ review_group.outputs.technical_reviewer | tojson }}"
       - "-ReadabilityReviewerJson"
