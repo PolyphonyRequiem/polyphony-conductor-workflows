@@ -238,9 +238,16 @@ agents:
 
       3. **Run tests** — Ensure the build passes and tests succeed after fixes.
 
-      4. **Commit and push** — Commit fixes with a descriptive message and push:
+      4. **Commit and push** — Commit fixes with a descriptive message and push.
+
+         Stage **only** the files you modified for this fix — never use
+         `git add -A`, `git add .`, or `git add --all`. The working tree may
+         contain unrelated dirty files from concurrent human work or earlier
+         workflow iterations; sweeping them in pollutes the commit, breaks
+         AB# traceability, and creates phantom changes in the PR.
+
          ```
-         git add -A
+         git add <path1> <path2>   # explicit paths, one per modified file
          git commit -m "fix: address PR review feedback (iteration {{ review_counter.output.iteration }})"
          git push
          ```
