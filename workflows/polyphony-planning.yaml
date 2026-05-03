@@ -18,6 +18,11 @@ workflow:
   version: "1.0.0"
   entry_point: preflight_lite
 
+  limits:
+    # Planning workflow invokes plan-level.yaml which performs recursive
+    # planning. Default 10 is far too low.
+    max_iterations: 100
+
   input:
     work_item_id:
       type: number
@@ -60,6 +65,9 @@ agents:
         when: "{{ preflight_lite.output.ready == true }}"
       - to: preflight_lite_gate
         when: "{{ preflight_lite.output.ready == false }}"
+      # Catch-all: if `ready` is missing or non-boolean, surface to user
+      # rather than ValueError. See conductor-mechanics M4.
+      - to: preflight_lite_gate
 
   # ── Preflight lite gate (human decision point) ─────────────────────────
   #
@@ -148,6 +156,10 @@ agents:
         when: "{{ seed_check.output.phase == 'needs_seeding' }}"
       - to: $end
         when: "{{ seed_check.output.phase == 'ready_for_implementation' }}"
+      # Catch-all: detect-state.ps1 may return other phases (done, removed,
+      # error, needs_planning, in_progress, etc.); route to $end rather than
+      # crash with ValueError. See conductor-mechanics M4.
+      - to: $end
 
   # ── Work tree seeder ───────────────────────────────────────────────────
   #
