@@ -252,7 +252,7 @@ agents:
         description: The full plan document in Markdown format
       open_questions:
         type: array
-        description: Questions requiring user input before plan can finalize (empty array if none)
+        description: Questions requiring user input before plan can finalize (empty array if none). Only severity >= moderate items should be emitted; the open_questions_gate route filters on severity.
         items:
           type: object
           properties:
@@ -262,14 +262,21 @@ agents:
             detail:
               type: string
               description: Full description of the question and why it matters
+            severity:
+              type: string
+              description: One of critical, major, moderate, low. Items with severity = low should be documented inline in the plan and NOT emitted here.
       summary:
         type: string
         description: Brief one-paragraph summary of the plan
     routes:
+      # Severity-gated: only stop on the gate when at least one question is
+      # moderate or higher. Low-severity items in the array (if the architect
+      # emits any despite instructions) are filtered out and we proceed
+      # straight to review.
       - to: open_questions_gate
-        when: "{{ architect.output.open_questions | length > 0 }}"
+        when: "{{ architect.output.open_questions | selectattr('severity', 'in', ['moderate', 'major', 'critical']) | list | length > 0 }}"
       - to: review_group
-        when: "{{ architect.output.open_questions | length == 0 }}"
+        when: "{{ architect.output.open_questions | selectattr('severity', 'in', ['moderate', 'major', 'critical']) | list | length == 0 }}"
 
   # ── Open questions gate ──────────────────────────────────────────────────
   #
@@ -286,10 +293,13 @@ agents:
       ## 🤔 Open Questions — Work Item {{ workflow.input.work_item_id }}
 
       The architect has identified questions that need your input before
-      finalizing the plan:
+      finalizing the plan. Only **moderate-or-higher severity** questions are
+      shown here; lower-severity items are documented inline in the plan as
+      Assumptions or Risks instead of stopping for input.
 
-      {% for question in architect.output.open_questions %}
-      ### {{ loop.index }}. {{ question.topic }}
+      {% set blocking = architect.output.open_questions | selectattr('severity', 'in', ['moderate', 'major', 'critical']) | list %}
+      {% for question in blocking %}
+      ### {{ loop.index }}. [{{ question.severity | upper }}] {{ question.topic }}
 
       {{ question.detail }}
 
@@ -342,7 +352,17 @@ agents:
         description: Numeric review score 0-100
       feedback:
         type: string
-        description: Detailed feedback on the plan
+        description: Detailed feedback on the plan (full narrative — used in plan_approval display)
+      blocking_issues:
+        type: array
+        description: Issues that prevent the plan from passing review. The architect is asked to address ONLY these on revision (no nice-to-haves).
+        items:
+          type: string
+      suggestions:
+        type: array
+        description: Optional improvements that are NOT blocking. The architect may consider these but is explicitly asked to ignore them on revision.
+        items:
+          type: string
       strengths:
         type: array
         description: List of plan strengths
@@ -359,7 +379,9 @@ agents:
       ## Your Mission
 
       Review the following plan for technical soundness, feasibility, and
-      alignment with the decomposition guidance. Score the plan 0-100.
+      alignment with the decomposition guidance. Score the plan 0-100, and
+      separate your findings into **blocking issues** (must-fix to pass) and
+      **suggestions** (nice-to-haves the architect should ignore on revision).
 
       ## Context
 
@@ -380,6 +402,19 @@ agents:
       | Decomposition | 25% | Are child items well-scoped and appropriately sized? |
       | Alignment | 20% | Does the plan follow type-specific guidance? |
 
+      ## Blocking vs Suggestion — guidance
+
+      An issue is **blocking** if any of the following apply:
+      - The plan would fail acceptance criteria as written
+      - A design choice is technically infeasible or contradicts the type guidance
+      - A child item is missing, mis-sized, or has unclear acceptance criteria
+      - A dependency or risk is unaccounted for and would derail implementation
+
+      Everything else is a **suggestion** — stylistic preferences, additional
+      detail you'd like to see, alternative phrasings, etc. **Be conservative
+      with blocking issues** — every blocking item triggers a revision cycle,
+      and revision cycles are capped at 5.
+
       {% if guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer %}
       ## Repo-Specific Guidance
 
@@ -393,10 +428,17 @@ agents:
       {
         "score": 0,
         "feedback": "Detailed feedback on the plan",
+        "blocking_issues": ["Concrete issue 1 the architect must fix", "..."],
+        "suggestions": ["Optional nit 1", "..."],
         "strengths": ["..."],
         "weaknesses": ["..."]
       }
       ```
+
+      `blocking_issues` should be empty `[]` when the plan passes review (score
+      ≥ 90 with no must-fix items). Each item in `blocking_issues` should be a
+      single, actionable sentence — the architect will see these as a flat
+      list and address each one.
 
   # ── Readability reviewer ─────────────────────────────────────────────────
   #
@@ -419,7 +461,17 @@ agents:
         description: Numeric review score 0-100
       feedback:
         type: string
-        description: Detailed feedback on the plan
+        description: Detailed feedback on the plan (full narrative — used in plan_approval display)
+      blocking_issues:
+        type: array
+        description: Issues that prevent the plan from passing review. The architect is asked to address ONLY these on revision (no nice-to-haves).
+        items:
+          type: string
+      suggestions:
+        type: array
+        description: Optional improvements that are NOT blocking. The architect may consider these but is explicitly asked to ignore them on revision.
+        items:
+          type: string
       strengths:
         type: array
         description: List of plan strengths
@@ -436,7 +488,9 @@ agents:
       ## Your Mission
 
       Review the following plan for clarity, completeness, and readability.
-      Score the plan 0-100.
+      Score the plan 0-100, and separate your findings into **blocking
+      issues** (must-fix to pass) and **suggestions** (nice-to-haves the
+      architect should ignore on revision).
 
       ## Context
 
@@ -456,6 +510,19 @@ agents:
       | Completeness | 25% | Are acceptance criteria, scope, and goals clear? |
       | Actionability | 20% | Can downstream agents and humans act on it? |
 
+      ## Blocking vs Suggestion — guidance
+
+      An issue is **blocking** if any of the following apply:
+      - A required template section is missing or so unclear it would block downstream work
+      - Acceptance criteria are absent, contradictory, or untestable
+      - Scope or goals are ambiguous in a way that would derail implementation
+      - The plan structure is so disorganized that a downstream agent could not act on it
+
+      Everything else is a **suggestion** — phrasing, style, additional
+      examples, formatting preferences, etc. **Be conservative with blocking
+      issues** — every blocking item triggers a revision cycle, and revision
+      cycles are capped at 5.
+
       {% if guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer %}
       ## Repo-Specific Guidance
 
@@ -469,10 +536,16 @@ agents:
       {
         "score": 0,
         "feedback": "Detailed feedback on the plan",
+        "blocking_issues": ["Concrete issue 1 the architect must fix", "..."],
+        "suggestions": ["Optional nit 1", "..."],
         "strengths": ["..."],
         "weaknesses": ["..."]
       }
       ```
+
+      `blocking_issues` should be empty `[]` when the plan passes review (score
+      ≥ 90 with no must-fix items). Each item should be a single, actionable
+      sentence.
 
   # ── Review router ────────────────────────────────────────────────────────
   #
@@ -485,17 +558,18 @@ agents:
   #   Post: Routes to architect (revise) or plan_approval based on scores.
   - name: review_router
     type: script
-    description: Route based on combined review scores
+    description: Aggregate reviewer outputs and decide architect-revise vs plan_approval (5-revision cap, blocking-issue-aware)
     command: pwsh
     args:
       - "-NoProfile"
-      - "-Command"
-      - >-
-        $techScore = {{ review_group.outputs.technical_reviewer.score }};
-        $readScore = {{ review_group.outputs.readability_reviewer.score }};
-        $avg = [math]::Floor(($techScore + $readScore) / 2);
-        $pass = $avg -ge 90;
-        @{ average_score = $avg; technical_score = $techScore; readability_score = $readScore; passed = $pass } | ConvertTo-Json
+      - "-File"
+      - "scripts/review-router.ps1"
+      - "-TechReviewerJson"
+      - "{{ review_group.outputs.technical_reviewer | tojson }}"
+      - "-ReadabilityReviewerJson"
+      - "{{ review_group.outputs.readability_reviewer | tojson }}"
+      - "-PriorCycleCount"
+      - "{{ context.history | select('equalto', 'review_router') | list | length }}"
     routes:
       - to: architect
         when: "{{ review_router.output.passed == false }}"
@@ -516,8 +590,24 @@ agents:
     prompt: |
       ## 📋 Plan Approval — Work Item {{ workflow.input.work_item_id }}
 
+      {% if review_router.output.forced_by_cap %}
+      > ⚠️ **Revision cap hit.** The architect produced 5 revisions but the
+      > combined review score is still **{{ review_router.output.average_score }}**/100
+      > with **{{ review_router.output.blocking_issue_count }} blocking issue(s)
+      > unresolved**. Routing has been forced to this gate so a human can
+      > decide. Review the outstanding blocking issues below carefully before
+      > approving.
+
+      ### Outstanding blocking issues
+
+      {{ review_router.output.combined_feedback }}
+      {% else %}
       The architect's plan has passed review with an average score of
-      **{{ review_router.output.average_score }}**/100.
+      **{{ review_router.output.average_score }}**/100
+      (after {{ review_router.output.revision_cycles_completed }} revision
+      cycle(s); {{ review_router.output.blocking_issue_count }} blocking
+      issue(s) at pass time).
+      {% endif %}
 
       ### Review Scores
 

@@ -44,13 +44,40 @@ prior plan**, not regenerate it.
 {% elif last == "review_router"
         and review_group is defined
         and review_group.outputs is defined %}
-## 🔁 You Are Being Re-Invoked After Review
+{% set revision_number = context.history | select('equalto', 'review_router') | list | length %}
+{% set is_last_revision = revision_number >= 5 %}
+## 🔁 You Are Being Re-Invoked After Review — Revision {{ revision_number }} of 5
 
-The reviewers scored your prior plan below the approval threshold. Address
-their feedback rather than regenerating from scratch. Emit
-`open_questions: []` unless the feedback raises a genuinely new ambiguity
-that the user must resolve.
+The reviewers scored your prior plan below the approval threshold. **There is
+a hard cap of 5 revisions** — after revision 5, routing proceeds to the human
+plan_approval gate regardless of remaining issues.{% if is_last_revision %} **This
+is your last revision before the cap fires.**{% endif %}
 
+### Revision rules (read carefully — violating these regresses scores)
+
+1. **Surgical only.** Address ONLY the blocking issues called out below. Do
+   NOT make stylistic changes, restructure unaffected sections, rewrite prose
+   that wasn't flagged, or act on suggestions that are nice-to-have rather
+   than blocking. Sweeping rewrites have empirically REGRESSED scores by
+   breaking previously-good sections.
+2. **Preserve structure.** Keep the same section headings, ordering, and
+   level of detail in unaffected sections. Treat them as locked.
+3. **No new open questions.** Emit `open_questions: []`. Re-asking already-
+   answered questions or raising new ones at this stage will loop the
+   workflow needlessly.
+4. **Acknowledge what changed.** In the `summary` output field, briefly note
+   which blocking issues you addressed and where (e.g. "Addressed reviewer
+   concern about retry semantics in §Proposed Design").
+
+{% if review_router is defined and review_router.output is defined and review_router.output.combined_feedback is defined and review_router.output.combined_feedback %}
+### Blocking issues to address ({{ review_router.output.blocking_issue_count }} total)
+
+{{ review_router.output.combined_feedback }}
+
+> The list above is pre-filtered to *blocking* issues only. Suggestions and
+> nice-to-haves from the reviewers are deliberately omitted — do not act on
+> them this iteration.
+{% else %}
 {% if review_group.outputs.technical_reviewer is defined %}
 ### Technical review (score: {{ review_group.outputs.technical_reviewer.score }})
 {{ review_group.outputs.technical_reviewer.feedback }}
@@ -60,9 +87,10 @@ that the user must resolve.
 ### Readability review (score: {{ review_group.outputs.readability_reviewer.score }})
 {{ review_group.outputs.readability_reviewer.feedback }}
 {% endif %}
+{% endif %}
 
 {% if architect is defined and architect.output is defined and architect.output.plan is defined %}
-### Prior plan (refine, do not discard)
+### Prior plan (refine surgically, do not regenerate)
 ```markdown
 {{ architect.output.plan }}
 ```
@@ -184,13 +212,29 @@ Read the user plan from the filesystem and use it as your starting point.
    - Define acceptance criteria for each child item
    - Group children into PR Groups (PGs) for implementation ordering
 
-4. **Identify open questions** — If you encounter any of the following, raise them
-   as open questions rather than making assumptions:
-   - Ambiguous requirements in the work item description
-   - Conflicts between the user plan and type constraints
-   - Multiple valid decomposition strategies
-   - External dependencies that need clarification
-   - Scope boundaries that are unclear
+4. **Identify open questions** — If you encounter ambiguity, classify it
+   by severity and emit it as an open question only when severity is
+   **moderate or higher**. Lower-severity items should be documented inline
+   in the plan (e.g., as Risks / Assumptions / Alternatives) rather than
+   raised to the user.
+
+   | Severity | Meaning | Action |
+   |---|---|---|
+   | `critical` | Plan cannot proceed without an answer (would invalidate the design) | Emit as open question |
+   | `major`    | Answer would substantially change the chosen approach | Emit as open question |
+   | `moderate` | Answer would meaningfully refine scope, decomposition, or acceptance criteria | Emit as open question |
+   | `low`      | A reasonable default exists; the answer is a refinement, not a blocker | Document inline as an Assumption / Risk; do NOT emit |
+
+   Examples of items that should be emitted (severity ≥ moderate):
+   - Ambiguous requirements that change scope
+   - Conflicts between user plan and type constraints
+   - Multiple plausible decomposition strategies with materially different cost
+   - External dependencies that block the work item
+
+   Examples that should NOT be emitted (severity = low):
+   - "Should we use spaces or tabs?" — pick one, document the choice
+   - "Should error messages be capitalized?" — pick one, document the choice
+   - "What's the exact wording of the help text?" — draft it, mark refinable
 
 ## Output
 
@@ -201,14 +245,21 @@ Return a JSON object with this structure:
   "open_questions": [
     {
       "topic": "Brief topic title",
-      "detail": "Full description of the question and why it matters"
+      "detail": "Full description of the question and why it matters",
+      "severity": "moderate"
     }
   ],
   "summary": "Brief one-paragraph summary of the plan"
 }
 ```
 
+`severity` must be one of: `critical`, `major`, `moderate`, `low`. Per the
+severity table above, only emit questions with severity ≥ `moderate`. The
+workflow filters on this — `low`-severity items will not stop on the gate
+even if you emit them.
+
 If there are no open questions, return an empty array: `"open_questions": []`
+
 
 ## Constraints
 
