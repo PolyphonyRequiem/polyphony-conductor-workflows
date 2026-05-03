@@ -245,6 +245,32 @@ agents:
         workflow iterations; sweeping them in pollutes the commit, breaks
         AB# traceability, and creates phantom changes in PR review.
 
+      {% if task_reviewer.output is defined and task_reviewer.output.verdict == 'changes_requested' and task_reviewer.output.feedback %}
+      ## Previous Reviewer Feedback (this task)
+
+      Your previous attempt at this task was rejected by `task_reviewer`. Address the
+      feedback below specifically — the implementation already exists on the branch;
+      do NOT re-research the problem from scratch and conclude "already implemented".
+      Apply the changes the reviewer asked for, commit, and let the reviewer re-check.
+
+      Treat each numbered bug or concern as a required change. If you disagree with a
+      finding, fix the others and explain in your commit message and via
+      `twig note --text "..."` why you did not apply that one.
+
+      {{ task_reviewer.output.feedback }}
+      {% endif %}
+
+      {% if issue_reviewer.output is defined and issue_reviewer.output.verdict == 'changes_requested' and issue_reviewer.output.feedback %}
+      ## Issue-Level Reviewer Feedback (PG-wide)
+
+      The issue-level reviewer flagged the following PG-wide concerns from the previous
+      end-of-PG review. These may span multiple tasks — if the current task touches any
+      of them, address them here. Otherwise note that they will be picked up by the
+      task that owns them.
+
+      {{ issue_reviewer.output.feedback }}
+      {% endif %}
+
       {% if guidance_loader.output.coder is defined and guidance_loader.output.coder %}
       ## Repo-Specific Guidance
 
