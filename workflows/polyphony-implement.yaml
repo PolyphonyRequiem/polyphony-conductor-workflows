@@ -18,6 +18,13 @@ workflow:
   version: "1.0.0"
   entry_point: preflight_lite
 
+  limits:
+    # Implementation workflow runs a parallel for_each (max_concurrent: 3)
+    # over PGs, each spawning implement-pg.yaml as a sub-workflow. Each
+    # for_each iteration counts toward max_iterations. Default 10 is far
+    # too low.
+    max_iterations: 200
+
   input:
     work_item_id:
       type: number
@@ -44,8 +51,15 @@ tools:
   - filesystem
 
 output:
-  all_pgs_merged: "{% if pg_execution_group is defined %}{{ pg_execution_group.failed_count == 0 }}{% else %}false{% endif %}"
-  completed_pgs: "{% if load_work_tree is defined %}{{ load_work_tree.output.completed_pgs }}{% else %}[]{% endif %}"
+  # Workflow-scope output is a Jinja template map rendered at end-of-run.
+  # Group results expose `errors`/`outputs`/`count` (no `failed_count` —
+  # see M8). Boolean expressions render as capital "True"/"False" strings
+  # which `_maybe_parse_json` does not coerce — wrap with `| string | lower`
+  # so the parent receives a proper bool. See conductor-mechanics M7/M8.
+  all_pgs_merged: "{% if pg_execution_group is defined %}{{ ((pg_execution_group.errors | length) == 0) | string | lower }}{% else %}false{% endif %}"
+  # Use `| json` filter (the only registered serializer; `tojson` does not
+  # exist) so the list arrives as valid JSON the parent can parse.
+  completed_pgs: "{% if load_work_tree is defined %}{{ load_work_tree.output.completed_pgs | json }}{% else %}[]{% endif %}"
 
 agents:
   # ── Lightweight preflight ──────────────────────────────────────────────
@@ -70,6 +84,9 @@ agents:
         when: "{{ preflight_lite.output.ready == true }}"
       - to: preflight_lite_gate
         when: "{{ preflight_lite.output.ready == false }}"
+      # Catch-all: if `ready` is missing or non-boolean, surface to user
+      # rather than ValueError. See conductor-mechanics M4.
+      - to: preflight_lite_gate
 
   # ── Preflight lite gate (human decision point) ─────────────────────────
   #
@@ -135,6 +152,9 @@ agents:
         when: "{{ load_work_tree.output.pending_pgs | length > 0 }}"
       - to: $end
         when: "{{ load_work_tree.output.pending_pgs | length == 0 }}"
+      # Catch-all: if `pending_pgs` is missing or non-array, route to $end
+      # rather than ValueError. See conductor-mechanics M4.
+      - to: $end
 
   # ── PG dispatcher ──────────────────────────────────────────────────────
   #
@@ -153,7 +173,7 @@ agents:
       - "-NoProfile"
       - "-Command"
       - >-
-        $tree = '{{ load_work_tree.output | tojson }}' | ConvertFrom-Json;
+        $tree = '{{ load_work_tree.output | json }}' | ConvertFrom-Json;
         $featureBranch = '{{ workflow.input.feature_branch }}';
         $pgs = @();
         foreach ($pg in $tree.pr_groups) {
@@ -184,7 +204,9 @@ agents:
   #   Post: Each PG has been implemented, PR'd, and merged (or failed).
   - name: pg_execution_group
     for_each:
-      source: "{{ pg_dispatcher.output.pgs }}"
+      # `source:` is a bare dotted path, NOT a Jinja expression. Wrapping
+      # in {{ }} causes config-load rejection. See conductor-mechanics M8.
+      source: pg_dispatcher.output.pgs
       as: pg
       max_concurrent: 3
       failure_mode: fail_fast
@@ -200,10 +222,15 @@ agents:
           feature_branch: "{{ pg.feature_branch }}"
           platform: "{{ workflow.input.platform }}"
     routes:
+      # Group results expose `errors` / `outputs` / `count`. There is no
+      # `failed_count` / `succeeded_count` aggregate — derive from
+      # `errors | length`. See conductor-mechanics M8.
       - to: pg_summary_gate
-        when: "{{ pg_execution_group.failed_count > 0 }}"
+        when: "{{ (pg_execution_group.errors | length) > 0 }}"
       - to: $end
-        when: "{{ pg_execution_group.failed_count == 0 }}"
+        when: "{{ (pg_execution_group.errors | length) == 0 }}"
+      # Catch-all guards against unexpected group state.
+      - to: pg_summary_gate
 
   # ── PG summary gate (human decision point) ─────────────────────────────
   #
@@ -220,8 +247,8 @@ agents:
 
       Implementation for work item **{{ workflow.input.work_item_id }}** completed with errors.
 
-      - **Succeeded:** {{ pg_execution_group.succeeded_count }}
-      - **Failed:** {{ pg_execution_group.failed_count }}
+      - **Succeeded:** {{ pg_execution_group.outputs | length }}
+      - **Failed:** {{ pg_execution_group.errors | length }}
 
       Some PGs were not implemented successfully. Review the failures and
       re-run the implementation workflow to retry failed PGs (state discovery
