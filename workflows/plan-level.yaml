@@ -332,7 +332,11 @@ agents:
     output:
       # Schema mirrors the JSON contract in this agent's prompt below.
       # Required by M2: review_router and plan_approval read
-      # `technical_reviewer.output.score` / `.feedback`.
+      # Accessible from review_router/templates as
+      # `review_group.outputs.technical_reviewer.score` / `.feedback`
+      # (parallel-group member outputs nest under `<group>.outputs.<agent>`,
+      # not as top-level context vars; see conductor-mechanics M8 and
+      # microsoft/conductor#140).
       score:
         type: number
         description: Numeric review score 0-100
@@ -487,8 +491,8 @@ agents:
       - "-NoProfile"
       - "-Command"
       - >-
-        $techScore = {{ technical_reviewer.output.score }};
-        $readScore = {{ readability_reviewer.output.score }};
+        $techScore = {{ review_group.outputs.technical_reviewer.score }};
+        $readScore = {{ review_group.outputs.readability_reviewer.score }};
         $avg = [math]::Floor(($techScore + $readScore) / 2);
         $pass = $avg -ge 90;
         @{ average_score = $avg; technical_score = $techScore; readability_score = $readScore; passed = $pass } | ConvertTo-Json
@@ -519,8 +523,8 @@ agents:
 
       | Reviewer | Score | Feedback |
       |----------|-------|----------|
-      | Technical | {{ review_router.output.technical_score }} | {{ technical_reviewer.output.feedback }} |
-      | Readability | {{ review_router.output.readability_score }} | {{ readability_reviewer.output.feedback }} |
+      | Technical | {{ review_router.output.technical_score }} | {{ review_group.outputs.technical_reviewer.feedback }} |
+      | Readability | {{ review_router.output.readability_score }} | {{ review_group.outputs.readability_reviewer.feedback }} |
 
       ### Plan Summary
 
