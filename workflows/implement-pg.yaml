@@ -21,8 +21,8 @@ workflow:
   entry_point: pg_router
 
   limits:
-    # Implement-pg runs a task loop (router -> coder -> reducer -> reviewer
-    # -> completer -> back to router) potentially many times per PG, then a
+    # Implement-pg runs a task loop (router -> coder -> reviewer ->
+    # completer -> back to router) potentially many times per PG, then a
     # PR lifecycle sub-workflow. Default 10 is far too low. See
     # conductor-mechanics M9.
     max_iterations: 200
@@ -251,77 +251,6 @@ agents:
       {{ guidance_loader.output.coder }}
       {% endif %}
     routes:
-      - to: reducer_code
-
-  # ── Code reducer ───────────────────────────────────────────────────────
-  #
-  # Summarizes the coder's output into a structured review package for the
-  # task reviewer. Extracts the key changes, files modified, and test results
-  # to keep the reviewer's context focused.
-  #
-  # Invariants:
-  #   Pre:  coder has completed and committed changes.
-  #   Post: output contains structured summary of changes for review.
-  - name: reducer_code
-    type: agent
-    model: claude-sonnet-4.6
-    description: Summarize coder output into a structured review package
-    tools:
-      - filesystem
-    output:
-      # Schema mirrors this agent's JSON contract below. Required by M2:
-      # task_reviewer's prompt reads .summary, .files_changed,
-      # .test_coverage, and .concerns.
-      task_id:
-        type: number
-        description: ADO work item ID for the task whose changes are summarized
-      files_changed:
-        type: array
-        description: List of file paths modified, created, or deleted
-        items:
-          type: string
-      summary:
-        type: string
-        description: Brief description of changes
-      test_coverage:
-        type: string
-        description: Description of tests added
-      concerns:
-        type: array
-        description: List of potential issues or edge cases
-        items:
-          type: string
-    prompt: |
-      You are a code change summarizer for the twig SDLC review pipeline.
-
-      ## Your Mission
-
-      Produce a concise, structured summary of the code changes made by the
-      coder agent for task {{ task_router.output.task_id }}.
-
-      ## Instructions
-
-      1. Review the recent commits on the current branch using `git log --oneline -5`
-      2. Read the diff of the latest changes using `git diff HEAD~1`
-      3. Summarize:
-         - Files modified/created/deleted
-         - Key logic changes
-         - Test coverage added
-         - Any concerns or edge cases
-
-      ## Output
-
-      Return a JSON object:
-      ```json
-      {
-        "task_id": 0,
-        "files_changed": ["..."],
-        "summary": "Brief description of changes",
-        "test_coverage": "Description of tests added",
-        "concerns": ["Any potential issues"]
-      }
-      ```
-    routes:
       - to: task_reviewer
 
   # ── Task reviewer ──────────────────────────────────────────────────────
@@ -331,7 +260,7 @@ agents:
   # approved, or back to coder if changes are requested.
   #
   # Invariants:
-  #   Pre:  reducer_code has produced a structured review package.
+  #   Pre:  coder has committed changes to the PG branch for the task.
   #   Post: output.verdict is 'approved' or 'changes_requested'.
   - name: task_reviewer
     type: agent
@@ -366,21 +295,21 @@ agents:
 
       - **Task ID:** {{ task_router.output.task_id }}
       - **Task title:** {{ task_router.output.task_title }}
-      - **Change summary:** {{ reducer_code.output.summary }}
-      - **Files changed:** {{ reducer_code.output.files_changed | join(', ') }}
-      - **Test coverage:** {{ reducer_code.output.test_coverage }}
-      - **Concerns:** {{ reducer_code.output.concerns | join(', ') }}
+      - **PG branch:** {{ workflow.input.branch_name }}
 
       ## Instructions
 
       1. Read the task description from ADO: `twig show {{ task_router.output.task_id }}`
-      2. Review the actual code changes (read the changed files)
-      3. Verify:
+      2. Inspect the latest commit on this PG branch — start with
+         `git log --oneline -5` and `git diff HEAD~1` to see what the
+         coder actually changed for this task.
+      3. Read the modified source and test files in full as needed.
+      4. Verify:
          - Requirements are met
          - Code quality is acceptable
          - Tests cover the implementation
          - No regressions introduced
-      4. Return your verdict
+      5. Return your verdict
 
       ## Output
 
@@ -446,7 +375,7 @@ agents:
   # Checks ADO predecessor links to determine if the PG is blocked by
   # unresolved dependencies. Runs dependency-check.ps1 which queries ADO
   # for predecessor work items and their states. Items with no predecessor
-  # links are routed directly to reducer_issue (gate never fires).
+  # links are routed directly to issue_reviewer (gate never fires).
   #
   # On re-entry (P3), this node re-runs and auto-clears blocks whose
   # predecessors have since reached a terminal state.
@@ -467,7 +396,7 @@ agents:
     routes:
       - to: dependency_gate
         when: "{{ dependency_check.output.status == 'blocked' }}"
-      - to: reducer_issue
+      - to: issue_reviewer
         when: "{{ dependency_check.output.status == 'not_blocked' }}"
       # Catch-all per M4: defensive fallback — if dependency-check.ps1
       # ever emits a status other than blocked/not_blocked, treat it as
@@ -530,86 +459,10 @@ agents:
         route: dependency_check
       - label: "⏩ Override"
         value: override
-        route: reducer_issue
+        route: issue_reviewer
       - label: "🔀 Reassign"
         value: reassign
         route: $end
-
-  # ── Issue reducer ──────────────────────────────────────────────────────
-  #
-  # Summarizes the completed PG work at the issue level for review. Aggregates
-  # all task completions, code changes, and test results into a cohesive
-  # issue-level review package.
-  #
-  # Invariants:
-  #   Pre:  All tasks complete; dependencies resolved (or overridden).
-  #   Post: output contains issue-level summary for reviewer.
-  - name: reducer_issue
-    type: agent
-    model: claude-sonnet-4.6
-    description: Summarize completed PG work at the issue level for review
-    tools:
-      - twig
-      - filesystem
-    output:
-      # Schema mirrors this agent's JSON contract below. Required by M2:
-      # issue_reviewer prompt and user_acceptance gate prompt both read
-      # named fields off reducer_issue.
-      pg_number:
-        type: number
-        description: PG number being summarized
-      tasks_completed:
-        type: number
-        description: Count of tasks finished in this PG
-      summary:
-        type: string
-        description: Overall PG summary
-      files_changed:
-        type: array
-        description: Aggregated list of files changed across the PG
-        items:
-          type: string
-      test_summary:
-        type: string
-        description: Overall test coverage description
-      concerns:
-        type: array
-        description: Remaining issues or technical debt
-        items:
-          type: string
-    prompt: |
-      You are an issue-level summarizer for the twig SDLC review pipeline.
-
-      ## Your Mission
-
-      Produce a comprehensive summary of all work completed in PG {{ workflow.input.pg_number }}
-      for work item {{ workflow.input.work_item_id }}.
-
-      ## Instructions
-
-      1. Review the work item hierarchy: `twig show {{ workflow.input.work_item_id }} --tree`
-      2. Review the commit history on branch `{{ workflow.input.branch_name }}`
-      3. Summarize:
-         - All tasks completed and their outcomes
-         - Overall code changes across the PG
-         - Test coverage added
-         - Any remaining concerns or technical debt
-
-      ## Output
-
-      Return a JSON object:
-      ```json
-      {
-        "pg_number": {{ workflow.input.pg_number }},
-        "tasks_completed": 0,
-        "summary": "Overall PG summary",
-        "files_changed": ["..."],
-        "test_summary": "Overall test coverage",
-        "concerns": ["Any remaining issues"]
-      }
-      ```
-    routes:
-      - to: issue_reviewer
 
   # ── Issue reviewer ─────────────────────────────────────────────────────
   #
@@ -618,7 +471,7 @@ agents:
   # ready for PR submission.
   #
   # Invariants:
-  #   Pre:  reducer_issue has produced an issue-level summary.
+  #   Pre:  All tasks complete; dependencies resolved (or overridden).
   #   Post: output.verdict is 'approved' or 'changes_requested'.
   - name: issue_reviewer
     type: agent
@@ -635,7 +488,7 @@ agents:
         description: Review outcome — "approved" or "changes_requested"
       feedback:
         type: string
-        description: Detailed issue-level review feedback
+        description: Detailed issue-level review feedback (also rendered in the user_acceptance human gate, so write it for a human reader)
       issues:
         type: array
         description: Specific issues if changes_requested (empty if approved)
@@ -653,22 +506,32 @@ agents:
       ## Context
 
       - **PG number:** {{ workflow.input.pg_number }}
-      - **Work item:** {{ workflow.input.work_item_id }}
-      - **Tasks completed:** {{ reducer_issue.output.tasks_completed }}
-      - **Summary:** {{ reducer_issue.output.summary }}
-      - **Files changed:** {{ reducer_issue.output.files_changed | join(', ') }}
-      - **Concerns:** {{ reducer_issue.output.concerns | join(', ') }}
+      - **Parent work item:** {{ workflow.input.work_item_id }}
+      - **PG branch:** {{ workflow.input.branch_name }}
+      - **Tasks in this PG:** {{ workflow.input.work_item_ids | length }}
+        ({{ workflow.input.work_item_ids | join(', ') }})
 
       ## Instructions
 
       1. Read the parent work item description: `twig show {{ workflow.input.work_item_id }}`
-      2. Review the overall code changes on branch `{{ workflow.input.branch_name }}`
+      2. Inspect the PG branch in full:
+         - `git log --oneline {{ workflow.input.feature_branch }}..{{ workflow.input.branch_name }}`
+           to see every commit added by this PG.
+         - `git diff {{ workflow.input.feature_branch }}...{{ workflow.input.branch_name }} --stat`
+           for an aggregate file/line summary.
+         - Read the modified files in full as needed.
       3. Verify:
          - All acceptance criteria from the parent work item are met
          - Tasks work together cohesively
          - No integration issues between tasks
          - Test coverage is adequate at the integration level
-      4. Return your verdict
+      4. Return your verdict.
+
+         The `feedback` field will be rendered to the human in the
+         user_acceptance gate that follows — write a self-contained
+         summary the user can read without re-running git. Cover:
+         what changed, which files moved, what tests were added, and
+         any remaining concerns.
 
       ## Output
 
@@ -707,25 +570,23 @@ agents:
       All tasks in PG {{ workflow.input.pg_number }} for work item
       **{{ workflow.input.work_item_id }}** have been implemented and reviewed.
 
-      ### Summary
+      ### Tasks Completed: {{ workflow.input.work_item_ids | length }}
 
-      {{ reducer_issue.output.summary }}
-
-      ### Tasks Completed: {{ reducer_issue.output.tasks_completed }}
-
-      ### Files Changed
-
-      {% for file in reducer_issue.output.files_changed %}
-      - `{{ file }}`
+      {% for task_id in workflow.input.work_item_ids %}
+      - `AB#{{ task_id }}`
       {% endfor %}
 
-      {% if reducer_issue.output.concerns | length > 0 %}
-      ### Remaining Concerns
+      ### Reviewer Summary
 
-      {% for concern in reducer_issue.output.concerns %}
-      - {{ concern }}
-      {% endfor %}
-      {% endif %}
+      {{ issue_reviewer.output.feedback }}
+
+      ### Inspect the changes
+
+      ```
+      git log --oneline {{ workflow.input.feature_branch }}..{{ workflow.input.branch_name }}
+      git diff {{ workflow.input.feature_branch }}...{{ workflow.input.branch_name }} --stat
+      git diff {{ workflow.input.feature_branch }}...{{ workflow.input.branch_name }}
+      ```
 
       ---
 

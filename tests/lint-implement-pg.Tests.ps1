@@ -61,13 +61,6 @@ agents:
     description: Implement a single task
     prompt: "Implement the task"
     routes:
-      - to: reducer_code
-  - name: reducer_code
-    type: agent
-    model: claude-sonnet-4.6
-    description: Summarize code changes
-    prompt: "Summarize changes"
-    routes:
       - to: task_reviewer
   - name: task_reviewer
     type: agent
@@ -92,7 +85,7 @@ agents:
     routes:
       - to: dependency_gate
         when: "{{ dependency_check.output.status == 'blocked' }}"
-      - to: reducer_issue
+      - to: issue_reviewer
         when: "{{ dependency_check.output.status == 'not_blocked' }}"
   - name: dependency_gate
     type: human_gate
@@ -103,17 +96,10 @@ agents:
         route: dependency_check
       - label: "Override"
         value: override
-        route: reducer_issue
+        route: issue_reviewer
       - label: "Reassign"
         value: reassign
         route: $end
-  - name: reducer_issue
-    type: agent
-    model: claude-sonnet-4.6
-    description: Summarize issue-level work
-    prompt: "Summarize PG work"
-    routes:
-      - to: issue_reviewer
   - name: issue_reviewer
     type: agent
     model: claude-opus-4.7-1m-internal

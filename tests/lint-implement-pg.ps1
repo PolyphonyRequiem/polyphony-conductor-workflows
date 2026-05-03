@@ -6,8 +6,8 @@
     1. Workflow name is 'implement-pg' with correct entry point
     2. Required inputs: work_item_id, pg_number, work_item_ids, branch_name, feature_branch
     3. Required outputs: merged, pr_url
-    4. Task loop agents: task_router, coder (Opus 1M), reducer_code, task_reviewer, task_completer
-    5. Issue review agents: reducer_issue, issue_reviewer (Opus 1M)
+    4. Task loop agents: task_router, coder (Opus 1M), task_reviewer, task_completer
+    5. Issue review agents: issue_reviewer (Opus 1M)
     6. PR creation: pr_submit, pr_platform_router, pr_lifecycle_github, pr_lifecycle_ado
     7. Dependency gate: dependency_check script + dependency_gate human_gate
     8. User acceptance human_gate
@@ -85,7 +85,7 @@ foreach ($output in $requiredOutputs) {
 }
 
 # ── Check 5: Task loop agents ────────────────────────────────────────────
-$taskLoopAgents = @('task_router', 'coder', 'reducer_code', 'task_reviewer', 'task_completer')
+$taskLoopAgents = @('task_router', 'coder', 'task_reviewer', 'task_completer')
 foreach ($agent in $taskLoopAgents) {
     if ($content -notmatch "name:\s*$agent") {
         $violations += [PSCustomObject]@{
@@ -112,7 +112,7 @@ if ($coderBlock -and $coderBlock -notmatch 'claude-opus-4.7-1m-internal') {
 }
 
 # ── Check 7: Issue review agents ─────────────────────────────────────────
-$issueAgents = @('reducer_issue', 'issue_reviewer')
+$issueAgents = @('issue_reviewer')
 foreach ($agent in $issueAgents) {
     if ($content -notmatch "name:\s*$agent") {
         $violations += [PSCustomObject]@{
