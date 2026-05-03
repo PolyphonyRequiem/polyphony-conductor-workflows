@@ -211,7 +211,12 @@ agents:
     routes:
       - to: architect
         when: "{{ route_check.output.phase == 'needs_planning' }}"
-      - to: seeder
+      # needs_seeding is treated as needs_planning: if Polyphony route says we
+      # need to seed but the architect hasn't run in this invocation, we have
+      # no tasks input for the seeder. Re-run the architect; the marker-aware
+      # seeder will reconcile against existing children (idempotent), so this
+      # is safe and produces the right end state.
+      - to: architect
         when: "{{ route_check.output.phase == 'needs_seeding' }}"
       - to: $end
         when: "{{ route_check.output.phase == 'already_planned' }}"
@@ -244,12 +249,48 @@ agents:
     output:
       # Schema mirrors the JSON contract in prompts/architect-plan-level.md.
       # Required by M2: routes and downstream prompts read
-      # `architect.output.plan` and `architect.output.open_questions` —
-      # without this schema the entire response lands in `output.result`
-      # and every named-field reference TemplateErrors.
+      # `architect.output.plan`, `architect.output.tasks`, and
+      # `architect.output.open_questions` — without this schema the entire
+      # response lands in `output.result` and every named-field reference
+      # TemplateErrors.
       plan:
         type: string
         description: The full plan document in Markdown format
+      tasks:
+        type: array
+        description: >-
+          Structured list of child work items to seed. Each task has a stable
+          task_id (task-1, task-2, ...) the seeder uses for idempotent
+          reconciliation across re-plans. Empty array means atomic — no
+          children to seed.
+        items:
+          type: object
+          properties:
+            task_id:
+              type: string
+              description: Stable identifier (task-1, task-2, ...). Preserved across re-plans for the same logical task.
+            title:
+              type: string
+              description: Work item title (one line)
+            type:
+              type: string
+              description: Work item type (must be valid per decomposition guidance)
+            description:
+              type: string
+              description: Work item description in Markdown
+            acceptance_criteria:
+              type: array
+              description: Acceptance criteria as a list of strings
+              items:
+                type: string
+            pg:
+              type: string
+              description: PG group name for implementation ordering (optional)
+            depends_on:
+              type: array
+              description: task_ids this task depends on (optional)
+              items:
+                type: string
       open_questions:
         type: array
         description: Questions requiring user input before plan can finalize (empty array if none). Only severity >= moderate items should be emitted; the open_questions_gate route filters on severity.
@@ -642,22 +683,45 @@ agents:
         value: reject
         route: $end
 
-  # ── Seeder agent ─────────────────────────────────────────────────────────
+  # ── Seeder script (P8 + P14) ─────────────────────────────────────────────
   #
-  # Creates child work items from the approved plan using the twig CLI.
-  # Uses type information from type_loader to determine appropriate child
-  # types. Routes to child_router for recursive planning of plannable children.
+  # Deterministic seeder. Consumes architect.output.tasks (structured array)
+  # and reconciles against existing children of the parent work item via
+  # marker-aware idempotent matching, then sets the polyphony:planned tag on
+  # the parent. Replaces the prior LLM seeder agent (which re-parsed plan
+  # markdown and produced duplicates on re-runs).
+  #
+  # Match precedence per task:
+  #   1. Existing child whose description contains
+  #      <!-- polyphony:plan-task-id=task-N --> matching the architect's id
+  #      → reused, no create.
+  #   2. Existing child with matching (title, type) under the parent → reused
+  #      with a warning (marker damaged or missing).
+  #   3. No match → create via `twig new`, embedding the marker as the last
+  #      line of description.
+  #
+  # On success (no errors), sets/merges `polyphony:planned` into the parent's
+  # System.Tags. The polyphony route command reads this tag to recognize the
+  # planned state without touching process-config.
   #
   # Invariants:
-  #   Pre:  Plan is approved; type_loader outputs available.
-  #   Post: Child work items are created in ADO; output.seeded_count is set.
+  #   Pre:  architect.output.tasks is a (possibly empty) array; type_loader
+  #         outputs available.
+  #   Post: Child work items exist in ADO with markers stamped; parent is
+  #         tagged polyphony:planned (only if no errors); output.seeded_count
+  #         + reused_count + error_count reflect the actual reconciliation.
   - name: seeder
-    type: agent
-    model: claude-sonnet-4.6
-    description: Create child work items from the approved plan
-    tools:
-      - twig
-    prompt: !file ../prompts/seeder-plan-level.md
+    type: script
+    description: Idempotent seeder — marker-aware reconciliation, sets polyphony:planned tag (P8, P14)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/seeder.ps1"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+      - "-TasksJson"
+      - "{{ architect.output.tasks | tojson }}"
     routes:
       - to: child_router
 
