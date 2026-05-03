@@ -201,6 +201,12 @@ agents:
     input_mapping:
       work_item_id: "{{ workflow.input.work_item_id }}"
       intent: "{{ workflow.input.intent }}"
+      # `polyphony-implement` declares feature_branch as required. detect-state
+      # exposes the suggested branch via state_detector.output.workspace_hint
+      # (now a nested object — see polyphony#2939 follow-up). Use the `default`
+      # filter so an empty/missing hint renders as "" instead of crashing under
+      # StrictUndefined. See conductor-mechanics M3.
+      feature_branch: "{{ state_detector.output.workspace_hint.feature_branch | default('') }}"
     routes:
       - to: state_detector
         # Re-discover phase after implementation. State_detector will see all
@@ -221,6 +227,10 @@ agents:
     workflow: ./close-out.yaml
     input_mapping:
       work_item_id: "{{ workflow.input.work_item_id }}"
+      # close-out only uses feature_branch in its summary markdown; declared
+      # `required: false, default: ""` so omission is harmless. We pass the
+      # detected hint anyway so the close-out summary reads sensibly.
+      feature_branch: "{{ state_detector.output.workspace_hint.feature_branch | default('') }}"
     routes:
       - to: state_detector
         # Re-discover phase after close-out. State_detector will see phase=done
