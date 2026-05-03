@@ -21,6 +21,13 @@ workflow:
   version: "1.0.0"
   entry_point: depth_guard
 
+  limits:
+    # Recursive planning: each level fans out plan_children_group (for_each)
+    # which spawns plan-level.yaml as a sub-workflow per plannable child.
+    # Each iteration counts toward max_iterations. Default 10 is far too
+    # low for any non-trivial hierarchy. See conductor-mechanics M9.
+    max_iterations: 200
+
   input:
     work_item_id:
       type: number
@@ -208,6 +215,11 @@ agents:
         when: "{{ route_check.output.phase == 'needs_seeding' }}"
       - to: $end
         when: "{{ route_check.output.phase == 'already_planned' }}"
+      # Catch-all per M4: route_check is a polyphony script whose output
+      # domain isn't statically guaranteed. An unexpected phase value
+      # (typo, error path, schema drift) would otherwise raise
+      # `ValueError: No matching route found` mid-run.
+      - to: type_loader_error_gate
 
   # ── Architect agent ──────────────────────────────────────────────────────
   #
@@ -222,14 +234,37 @@ agents:
   #   Post: output.plan contains the plan artifact; output.open_questions may be non-empty.
   - name: architect
     type: agent
-    model: claude-opus-4.7-1m-internal
-    context_window: 1000000
+    model: gpt-4.1
     description: Create or refine a plan using type-specific context and decomposition guidance
     tools:
       - twig
       - gh
       - filesystem
     prompt: !file ../prompts/architect-plan-level.md
+    output:
+      # Schema mirrors the JSON contract in prompts/architect-plan-level.md.
+      # Required by M2: routes and downstream prompts read
+      # `architect.output.plan` and `architect.output.open_questions` —
+      # without this schema the entire response lands in `output.result`
+      # and every named-field reference TemplateErrors.
+      plan:
+        type: string
+        description: The full plan document in Markdown format
+      open_questions:
+        type: array
+        description: Questions requiring user input before plan can finalize (empty array if none)
+        items:
+          type: object
+          properties:
+            topic:
+              type: string
+              description: Brief topic title
+            detail:
+              type: string
+              description: Full description of the question and why it matters
+      summary:
+        type: string
+        description: Brief one-paragraph summary of the plan
     routes:
       - to: open_questions_gate
         when: "{{ architect.output.open_questions | length > 0 }}"
@@ -303,6 +338,26 @@ agents:
     type: agent
     model: claude-sonnet-4.6
     description: Review plan for technical soundness and feasibility
+    output:
+      # Schema mirrors the JSON contract in this agent's prompt below.
+      # Required by M2: review_router and plan_approval read
+      # `technical_reviewer.output.score` / `.feedback`.
+      score:
+        type: number
+        description: Numeric review score 0-100
+      feedback:
+        type: string
+        description: Detailed feedback on the plan
+      strengths:
+        type: array
+        description: List of plan strengths
+        items:
+          type: string
+      weaknesses:
+        type: array
+        description: List of plan weaknesses
+        items:
+          type: string
     prompt: |
       You are a technical reviewer for an SDLC planning workflow.
 
@@ -360,6 +415,26 @@ agents:
     type: agent
     model: claude-sonnet-4.6
     description: Review plan for clarity and completeness
+    output:
+      # Schema mirrors this agent's JSON contract below; matches
+      # technical_reviewer's shape so review_router can treat them
+      # interchangeably. Required by M2.
+      score:
+        type: number
+        description: Numeric review score 0-100
+      feedback:
+        type: string
+        description: Detailed feedback on the plan
+      strengths:
+        type: array
+        description: List of plan strengths
+        items:
+          type: string
+      weaknesses:
+        type: array
+        description: List of plan weaknesses
+        items:
+          type: string
     prompt: |
       You are a readability reviewer for an SDLC planning workflow.
 
@@ -533,7 +608,9 @@ agents:
   #   Post: Each plannable child has been planned (or depth-limited).
   - name: plan_children_group
     for_each:
-      source: "{{ child_router.output.plannable_children }}"
+      # Bare dotted path per M8 — Jinja `{{ }}` wrappers are rejected by
+      # `validate_source_format` (and even when accepted, are misleading).
+      source: child_router.output.plannable_children
       as: child
       max_concurrent: 3
       failure_mode: continue_on_error
@@ -549,10 +626,13 @@ agents:
           intent: "{{ workflow.input.intent }}"
           user_plan_path: ""
     routes:
+      # Per M8: parallel/for_each groups expose `outputs`/`errors`/`count`,
+      # NOT `failed_count`/`succeeded_count`. Derive failure presence from
+      # `errors | length`.
       - to: plan_children_summary_gate
-        when: "{{ plan_children_group.failed_count > 0 }}"
+        when: "{{ (plan_children_group.errors | length) > 0 }}"
       - to: $end
-        when: "{{ plan_children_group.failed_count == 0 }}"
+        when: "{{ (plan_children_group.errors | length) == 0 }}"
 
   # ── Plan children summary gate ───────────────────────────────────────────
   #
@@ -569,8 +649,8 @@ agents:
 
       Planning for work item **{{ workflow.input.work_item_id }}** completed with errors.
 
-      - **Succeeded:** {{ plan_children_group.succeeded_count }}
-      - **Failed:** {{ plan_children_group.failed_count }}
+      - **Succeeded:** {{ plan_children_group.outputs | length }}
+      - **Failed:** {{ plan_children_group.errors | length }}
 
       Some child work items were not planned. Review the failures and re-run
       planning for the affected items if needed.

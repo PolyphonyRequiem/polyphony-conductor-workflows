@@ -26,6 +26,9 @@ workflow:
   version: "1.0.0"
   entry_point: feature_pr_creator
 
+  limits:
+    max_iterations: 200
+
   input:
     work_item_id:
       type: number
@@ -109,6 +112,10 @@ agents:
         when: "{{ pr_platform_router.output.platform == 'github' }}"
       - to: pr_lifecycle_ado
         when: "{{ pr_platform_router.output.platform == 'ado' }}"
+      # Catch-all: unknown platform -> $end (no merge). Surfaces as
+      # merged=false in the workflow output rather than throwing
+      # "no matching route" mid-run (per conductor-mechanics M4).
+      - to: $end
 
   # ── GitHub PR lifecycle sub-workflow ─────────────────────────────────────
   #
@@ -134,6 +141,9 @@ agents:
         when: "{{ pr_lifecycle_github.output.merged == true }}"
       - to: remediation_counter
         when: "{{ pr_lifecycle_github.output.merged == false }}"
+      # Catch-all: undefined/missing 'merged' -> remediation cycle
+      # (treats ambiguous outcomes as 'not merged') per M4.
+      - to: remediation_counter
 
   # ── ADO PR lifecycle sub-workflow ────────────────────────────────────────
   #
@@ -158,6 +168,9 @@ agents:
         when: "{{ pr_lifecycle_ado.output.merged == true }}"
       - to: remediation_counter
         when: "{{ pr_lifecycle_ado.output.merged == false }}"
+      # Catch-all: undefined/missing 'merged' -> remediation cycle
+      # (treats ambiguous outcomes as 'not merged') per M4.
+      - to: remediation_counter
 
   # ── Remediation cycle counter ───────────────────────────────────────────
   #
@@ -192,6 +205,8 @@ agents:
         when: "{{ remediation_counter.output.under_limit == true }}"
       - to: remediation_cap_gate
         when: "{{ remediation_counter.output.under_limit == false }}"
+      # Catch-all: defensive against missing/malformed under_limit.
+      - to: remediation_cap_gate
 
   # ── Remediation cap gate ────────────────────────────────────────────────
   #
@@ -282,7 +297,7 @@ agents:
   #         the work needed.
   - name: remediation_planner
     type: agent
-    model: claude-opus-4.7
+    model: gpt-5
     context_window: 1000000
     description: Create addendum plan from review feedback for remediation
     tools:
@@ -334,6 +349,27 @@ agents:
         "estimated_tasks": 0
       }
       ```
+    output:
+      addendum_plan_path:
+        type: string
+        description: Path to the addendum plan markdown document
+      work_items:
+        type: array
+        description: List of remediation tasks to seed as ADO work items
+        items:
+          type: object
+          properties:
+            title:
+              type: string
+            description:
+              type: string
+            files:
+              type: array
+              items:
+                type: string
+      estimated_tasks:
+        type: number
+        description: Total count of remediation tasks
     routes:
       - to: remediation_seeder
 
@@ -348,7 +384,7 @@ agents:
   #   Post: New work items are created in ADO; output.work_item_ids is set.
   - name: remediation_seeder
     type: agent
-    model: claude-sonnet-4.6
+    model: gpt-4o
     description: Create ADO work items for remediation tasks
     tools:
       - twig
@@ -365,7 +401,7 @@ agents:
       - **Remediation cycle:** {{ remediation_counter.output.iteration }}
       - **Tasks to seed:**
 
-      {{ remediation_planner.output.work_items | tojson(indent=2) }}
+      {{ remediation_planner.output.work_items | json(indent=2) }}
 
       ## Instructions
 
@@ -384,6 +420,18 @@ agents:
         "branch_name": "remediation/{{ workflow.input.work_item_id }}-cycle-{{ remediation_counter.output.iteration }}"
       }
       ```
+    output:
+      work_item_ids:
+        type: array
+        description: ADO work item IDs created for the remediation tasks
+        items:
+          type: number
+      pg_number:
+        type: number
+        description: PG number for the remediation branch
+      branch_name:
+        type: string
+        description: Git branch name for the remediation work
     routes:
       - to: remediation_implementer
 
@@ -426,7 +474,7 @@ agents:
   #         pr_platform_router for the next review cycle.
   - name: feature_pr_updater
     type: agent
-    model: claude-sonnet-4.6
+    model: gpt-4o
     description: Re-request review on the feature PR after remediation
     tools:
       - gh

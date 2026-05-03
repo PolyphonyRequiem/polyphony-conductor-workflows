@@ -23,6 +23,9 @@ workflow:
   version: "1.0.0"
   entry_point: pr_reviewer
 
+  limits:
+    max_iterations: 50
+
   input:
     pr_number:
       type: number
@@ -47,7 +50,10 @@ tools:
   - filesystem
 
 output:
-  merged: "{{ pr_merger.output.merged | default(false) }}"
+  # Lowercase-coerce so the parent workflow's _maybe_parse_json sees
+  # 'true'/'false' rather than the capital 'True'/'False' Jinja produces
+  # for Python booleans (see conductor-mechanics M7).
+  merged: "{{ (pr_merger.output.merged | default(false)) | string | lower }}"
   pr_url: "{{ pr_merger.output.pr_url | default('') }}"
 
 agents:
@@ -64,7 +70,7 @@ agents:
   #         output.feedback contains detailed review comments.
   - name: pr_reviewer
     type: agent
-    model: claude-opus-4.7-1m-internal
+    model: gpt-5
     context_window: 1000000
     description: Review PR for correctness, quality, and requirement alignment
     tools:
@@ -123,11 +129,30 @@ agents:
       - **Request changes** for bugs, missing tests, security issues, or
         broken requirements
       - Do NOT request changes for style preferences or minor formatting
+    output:
+      verdict:
+        type: string
+        description: "Either 'approved' or 'changes_requested'"
+      feedback:
+        type: string
+        description: Detailed review summary
+      issues:
+        type: array
+        description: Specific issues if changes_requested (empty array if approved)
+        items:
+          type: string
+      severity:
+        type: string
+        description: "One of 'critical', 'major', 'minor'"
     routes:
       - to: pr_merger
         when: "{{ pr_reviewer.output.verdict == 'approved' }}"
       - to: review_counter
         when: "{{ pr_reviewer.output.verdict == 'changes_requested' }}"
+      # Catch-all: any unrecognized verdict (model hallucination, missing
+      # field) is treated as changes_requested so the loop can recover via
+      # the iteration counter rather than failing with "no matching route".
+      - to: review_counter
 
   # ── Review iteration counter ───────────────────────────────────────────
   #
@@ -162,6 +187,8 @@ agents:
         when: "{{ review_counter.output.under_limit == true }}"
       - to: pr_fix_exhausted_gate
         when: "{{ review_counter.output.under_limit == false }}"
+      # Catch-all: defensive against under_limit being missing/malformed.
+      - to: pr_fix_exhausted_gate
 
   # ── PR fixer ───────────────────────────────────────────────────────────
   #
@@ -175,7 +202,7 @@ agents:
   #   Post: Fixes are committed and pushed to the PR branch.
   - name: pr_fixer
     type: agent
-    model: claude-sonnet-4.6
+    model: gpt-4o
     description: Address PR review feedback with targeted code fixes
     tools:
       - gh
@@ -330,7 +357,7 @@ agents:
   #   Post: PR is merged; output.merged and output.pr_url are set.
   - name: pr_merger
     type: agent
-    model: claude-sonnet-4.6
+    model: gpt-4o
     description: Merge the approved PR via gh pr merge
     tools:
       - gh
@@ -375,5 +402,18 @@ agents:
       - Use squash merge unless the PR description specifies otherwise
       - Delete the source branch after merge (--delete-branch)
       - If merge fails due to conflicts, report the error — do NOT force-merge
+    output:
+      merged:
+        type: boolean
+        description: True if the PR merged successfully, false otherwise
+      pr_url:
+        type: string
+        description: Full URL of the merged PR
+      merge_method:
+        type: string
+        description: "Merge method used (e.g. 'squash', 'merge', 'rebase')"
+      error:
+        type: string
+        description: Empty string on success, otherwise the error message
     routes:
       - to: $end

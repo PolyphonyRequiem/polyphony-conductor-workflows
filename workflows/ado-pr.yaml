@@ -23,6 +23,9 @@ workflow:
   version: "1.0.0"
   entry_point: ado_pr_error
 
+  limits:
+    max_iterations: 50
+
   input:
     pr_number:
       type: number
@@ -43,7 +46,10 @@ workflow:
       description: "Review policy (always 'manual' for ADO stub)"
 
 output:
-  merged: "{{ ado_pr_manual_gate.output.choice == 'merged' }}"
+  # Lowercase-coerce so the parent workflow's `_maybe_parse_json` sees
+  # 'true'/'false' rather than the capital 'True'/'False' Jinja produces
+  # for Python booleans (see conductor-mechanics M7).
+  merged: "{{ (ado_pr_manual_gate.output.selected == 'merged') | string | lower }}"
   pr_url: ""
 
 agents:
