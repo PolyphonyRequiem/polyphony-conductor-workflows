@@ -16,6 +16,11 @@ workflow:
   version: "1.0.0"
   entry_point: preflight_check
 
+  limits:
+    # Apex workflow that orchestrates planning/implementation/close-out
+    # sub-workflows; default 10 is far too low.
+    max_iterations: 200
+
   input:
     work_item_id:
       type: number
@@ -56,6 +61,9 @@ agents:
         when: "{{ preflight_check.output.ready == true }}"
       - to: preflight_gate
         when: "{{ preflight_check.output.ready == false }}"
+      # Catch-all: if `ready` is missing or non-boolean, surface to user
+      # rather than ValueError. See conductor-mechanics M4.
+      - to: preflight_gate
 
   # ── Preflight gate (human decision point) ──────────────────────────────
   #
@@ -149,6 +157,10 @@ agents:
         when: "{{ state_detector.output.phase == 'done' }}"
       - to: $end
         when: "{{ state_detector.output.phase == 'removed' }}"
+      # Catch-all: detect-state.ps1 may return 'error' or an unexpected
+      # phase; route to $end rather than crash with ValueError. See
+      # conductor-mechanics M4 — this is the canonical M4 example.
+      - to: $end
 
   # ── Planning sub-workflow ─────────────────────────────────────────────
   #
