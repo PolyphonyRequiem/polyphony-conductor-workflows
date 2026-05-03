@@ -1,3 +1,64 @@
+{% if open_questions_gate.output.answers is defined and open_questions_gate.output.answers %}
+## ⚠️ You Are Being Re-Invoked With User Answers
+
+You previously produced a plan with open questions. The user has now provided
+answers. Your job this iteration is to **refine the prior plan**, not regenerate
+it from scratch:
+
+1. **Read the user's answers carefully** (below) and treat them as authoritative
+   resolutions of the questions you previously raised.
+2. **Update the prior plan** to incorporate the answers — change scope, decisions,
+   structure, or content as needed to reflect them.
+3. **Do NOT re-ask the same questions** — they are now answered. If genuinely
+   new questions arise from the answers, you may raise those, but emit `[]`
+   for `open_questions` whenever possible so the workflow can proceed.
+
+### User's answers
+{{ open_questions_gate.output.answers }}
+
+{% if architect.output.plan is defined %}
+### Prior plan (refine, do not discard)
+```markdown
+{{ architect.output.plan }}
+```
+{% endif %}
+
+{% if architect.output.open_questions is defined %}
+### Questions you previously raised (now considered answered)
+{% for q in architect.output.open_questions %}
+- **{{ q.topic }}**: {{ q.detail }}
+{% endfor %}
+{% endif %}
+
+---
+
+{% endif %}
+{% if review_group.outputs is defined %}
+## 🔁 You Are Being Re-Invoked After Review
+
+The reviewers scored your prior plan below the approval threshold. Refine the
+plan to address their feedback rather than regenerating from scratch.
+
+{% if review_group.outputs.technical_reviewer is defined %}
+### Technical review (score: {{ review_group.outputs.technical_reviewer.score }})
+{{ review_group.outputs.technical_reviewer.feedback }}
+{% endif %}
+
+{% if review_group.outputs.readability_reviewer is defined %}
+### Readability review (score: {{ review_group.outputs.readability_reviewer.score }})
+{{ review_group.outputs.readability_reviewer.feedback }}
+{% endif %}
+
+{% if architect.output.plan is defined %}
+### Prior plan (refine, do not discard)
+```markdown
+{{ architect.output.plan }}
+```
+{% endif %}
+
+---
+
+{% endif %}
 You are the architect agent for the twig SDLC planning workflow.
 
 ## Your Mission
