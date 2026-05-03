@@ -53,7 +53,7 @@ tools:
   - filesystem
 
 output:
-  merged: "{% if scope_closer is defined %}{{ scope_closer.exit_code == 0 }}{% else %}false{% endif %}"
+  merged: "{% if scope_closer is defined %}{{ scope_closer.output.exit_code == 0 }}{% else %}false{% endif %}"
   pr_url: "{{ pr_submit.output.pr_url | default('') }}"
 
 agents:

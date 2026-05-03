@@ -153,9 +153,9 @@ agents:
       - "{{ workflow.input.work_item_id }}"
     routes:
       - to: route_check
-        when: "{{ type_loader.exit_code == 0 }}"
+        when: "{{ type_loader.output.exit_code == 0 }}"
       - to: type_loader_error_gate
-        when: "{{ type_loader.exit_code != 0 }}"
+        when: "{{ type_loader.output.exit_code != 0 }}"
 
   # ── Type loader error gate ───────────────────────────────────────────────
   #
