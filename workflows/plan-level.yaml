@@ -211,7 +211,12 @@ agents:
     routes:
       - to: architect
         when: "{{ route_check.output.phase == 'needs_planning' }}"
-      - to: seeder
+      # needs_seeding is treated as needs_planning: if Polyphony route says we
+      # need to seed but the architect hasn't run in this invocation, we have
+      # no tasks input for the seeder. Re-run the architect; the marker-aware
+      # seeder will reconcile against existing children (idempotent), so this
+      # is safe and produces the right end state.
+      - to: architect
         when: "{{ route_check.output.phase == 'needs_seeding' }}"
       - to: $end
         when: "{{ route_check.output.phase == 'already_planned' }}"
@@ -244,15 +249,51 @@ agents:
     output:
       # Schema mirrors the JSON contract in prompts/architect-plan-level.md.
       # Required by M2: routes and downstream prompts read
-      # `architect.output.plan` and `architect.output.open_questions` —
-      # without this schema the entire response lands in `output.result`
-      # and every named-field reference TemplateErrors.
+      # `architect.output.plan`, `architect.output.tasks`, and
+      # `architect.output.open_questions` — without this schema the entire
+      # response lands in `output.result` and every named-field reference
+      # TemplateErrors.
       plan:
         type: string
         description: The full plan document in Markdown format
+      tasks:
+        type: array
+        description: >-
+          Structured list of child work items to seed. Each task has a stable
+          task_id (task-1, task-2, ...) the seeder uses for idempotent
+          reconciliation across re-plans. Empty array means atomic — no
+          children to seed.
+        items:
+          type: object
+          properties:
+            task_id:
+              type: string
+              description: Stable identifier (task-1, task-2, ...). Preserved across re-plans for the same logical task.
+            title:
+              type: string
+              description: Work item title (one line)
+            type:
+              type: string
+              description: Work item type (must be valid per decomposition guidance)
+            description:
+              type: string
+              description: Work item description in Markdown
+            acceptance_criteria:
+              type: array
+              description: Acceptance criteria as a list of strings
+              items:
+                type: string
+            pg:
+              type: string
+              description: PG group name for implementation ordering (optional)
+            depends_on:
+              type: array
+              description: task_ids this task depends on (optional)
+              items:
+                type: string
       open_questions:
         type: array
-        description: Questions requiring user input before plan can finalize (empty array if none)
+        description: Questions requiring user input before plan can finalize (empty array if none). Only severity >= moderate items should be emitted; the open_questions_gate route filters on severity.
         items:
           type: object
           properties:
@@ -262,14 +303,21 @@ agents:
             detail:
               type: string
               description: Full description of the question and why it matters
+            severity:
+              type: string
+              description: One of critical, major, moderate, low. Items with severity = low should be documented inline in the plan and NOT emitted here.
       summary:
         type: string
         description: Brief one-paragraph summary of the plan
     routes:
+      # Severity-gated: only stop on the gate when at least one question is
+      # moderate or higher. Low-severity items in the array (if the architect
+      # emits any despite instructions) are filtered out and we proceed
+      # straight to review.
       - to: open_questions_gate
-        when: "{{ architect.output.open_questions | length > 0 }}"
+        when: "{{ architect.output.open_questions | selectattr('severity', 'in', ['moderate', 'major', 'critical']) | list | length > 0 }}"
       - to: review_group
-        when: "{{ architect.output.open_questions | length == 0 }}"
+        when: "{{ architect.output.open_questions | selectattr('severity', 'in', ['moderate', 'major', 'critical']) | list | length == 0 }}"
 
   # ── Open questions gate ──────────────────────────────────────────────────
   #
@@ -286,10 +334,13 @@ agents:
       ## 🤔 Open Questions — Work Item {{ workflow.input.work_item_id }}
 
       The architect has identified questions that need your input before
-      finalizing the plan:
+      finalizing the plan. Only **moderate-or-higher severity** questions are
+      shown here; lower-severity items are documented inline in the plan as
+      Assumptions or Risks instead of stopping for input.
 
-      {% for question in architect.output.open_questions %}
-      ### {{ loop.index }}. {{ question.topic }}
+      {% set blocking = architect.output.open_questions | selectattr('severity', 'in', ['moderate', 'major', 'critical']) | list %}
+      {% for question in blocking %}
+      ### {{ loop.index }}. [{{ question.severity | upper }}] {{ question.topic }}
 
       {{ question.detail }}
 
@@ -311,20 +362,11 @@ agents:
 
   # ── Review group (parallel) ──────────────────────────────────────────────
   #
-  # Runs technical and readability reviews in parallel. Both reviewers
-  # score the plan 0-100 independently. Uses fail_fast to abort early
-  # if either reviewer encounters an error.
-  #
-  # Invariants:
-  #   Pre:  architect.output.plan is a complete plan artifact.
-  #   Post: Both reviewers have produced scores and feedback.
-  - name: review_group
-    parallel:
-      - technical_reviewer
-      - readability_reviewer
-    failure_mode: fail_fast
-    routes:
-      - to: review_router
+  # Defined as a top-level `parallel:` block at the bottom of this file,
+  # alongside `for_each:` and `agents:`. Conductor's schema requires
+  # parallel/for_each groups to be siblings of `agents:`, NOT nested
+  # inside agents-list items — see the parallel: block below for the
+  # actual definition.
 
   # ── Technical reviewer ───────────────────────────────────────────────────
   #
@@ -341,13 +383,27 @@ agents:
     output:
       # Schema mirrors the JSON contract in this agent's prompt below.
       # Required by M2: review_router and plan_approval read
-      # `technical_reviewer.output.score` / `.feedback`.
+      # Accessible from review_router/templates as
+      # `review_group.outputs.technical_reviewer.score` / `.feedback`
+      # (parallel-group member outputs nest under `<group>.outputs.<agent>`,
+      # not as top-level context vars; see conductor-mechanics M8 and
+      # microsoft/conductor#140).
       score:
         type: number
         description: Numeric review score 0-100
       feedback:
         type: string
-        description: Detailed feedback on the plan
+        description: Detailed feedback on the plan (full narrative — used in plan_approval display)
+      blocking_issues:
+        type: array
+        description: Issues that prevent the plan from passing review. The architect is asked to address ONLY these on revision (no nice-to-haves).
+        items:
+          type: string
+      suggestions:
+        type: array
+        description: Optional improvements that are NOT blocking. The architect may consider these but is explicitly asked to ignore them on revision.
+        items:
+          type: string
       strengths:
         type: array
         description: List of plan strengths
@@ -364,7 +420,9 @@ agents:
       ## Your Mission
 
       Review the following plan for technical soundness, feasibility, and
-      alignment with the decomposition guidance. Score the plan 0-100.
+      alignment with the decomposition guidance. Score the plan 0-100, and
+      separate your findings into **blocking issues** (must-fix to pass) and
+      **suggestions** (nice-to-haves the architect should ignore on revision).
 
       ## Context
 
@@ -385,6 +443,19 @@ agents:
       | Decomposition | 25% | Are child items well-scoped and appropriately sized? |
       | Alignment | 20% | Does the plan follow type-specific guidance? |
 
+      ## Blocking vs Suggestion — guidance
+
+      An issue is **blocking** if any of the following apply:
+      - The plan would fail acceptance criteria as written
+      - A design choice is technically infeasible or contradicts the type guidance
+      - A child item is missing, mis-sized, or has unclear acceptance criteria
+      - A dependency or risk is unaccounted for and would derail implementation
+
+      Everything else is a **suggestion** — stylistic preferences, additional
+      detail you'd like to see, alternative phrasings, etc. **Be conservative
+      with blocking issues** — every blocking item triggers a revision cycle,
+      and revision cycles are capped at 5.
+
       {% if guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer %}
       ## Repo-Specific Guidance
 
@@ -398,10 +469,17 @@ agents:
       {
         "score": 0,
         "feedback": "Detailed feedback on the plan",
+        "blocking_issues": ["Concrete issue 1 the architect must fix", "..."],
+        "suggestions": ["Optional nit 1", "..."],
         "strengths": ["..."],
         "weaknesses": ["..."]
       }
       ```
+
+      `blocking_issues` should be empty `[]` when the plan passes review (score
+      ≥ 90 with no must-fix items). Each item in `blocking_issues` should be a
+      single, actionable sentence — the architect will see these as a flat
+      list and address each one.
 
   # ── Readability reviewer ─────────────────────────────────────────────────
   #
@@ -424,7 +502,17 @@ agents:
         description: Numeric review score 0-100
       feedback:
         type: string
-        description: Detailed feedback on the plan
+        description: Detailed feedback on the plan (full narrative — used in plan_approval display)
+      blocking_issues:
+        type: array
+        description: Issues that prevent the plan from passing review. The architect is asked to address ONLY these on revision (no nice-to-haves).
+        items:
+          type: string
+      suggestions:
+        type: array
+        description: Optional improvements that are NOT blocking. The architect may consider these but is explicitly asked to ignore them on revision.
+        items:
+          type: string
       strengths:
         type: array
         description: List of plan strengths
@@ -441,7 +529,9 @@ agents:
       ## Your Mission
 
       Review the following plan for clarity, completeness, and readability.
-      Score the plan 0-100.
+      Score the plan 0-100, and separate your findings into **blocking
+      issues** (must-fix to pass) and **suggestions** (nice-to-haves the
+      architect should ignore on revision).
 
       ## Context
 
@@ -461,6 +551,19 @@ agents:
       | Completeness | 25% | Are acceptance criteria, scope, and goals clear? |
       | Actionability | 20% | Can downstream agents and humans act on it? |
 
+      ## Blocking vs Suggestion — guidance
+
+      An issue is **blocking** if any of the following apply:
+      - A required template section is missing or so unclear it would block downstream work
+      - Acceptance criteria are absent, contradictory, or untestable
+      - Scope or goals are ambiguous in a way that would derail implementation
+      - The plan structure is so disorganized that a downstream agent could not act on it
+
+      Everything else is a **suggestion** — phrasing, style, additional
+      examples, formatting preferences, etc. **Be conservative with blocking
+      issues** — every blocking item triggers a revision cycle, and revision
+      cycles are capped at 5.
+
       {% if guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer %}
       ## Repo-Specific Guidance
 
@@ -474,10 +577,16 @@ agents:
       {
         "score": 0,
         "feedback": "Detailed feedback on the plan",
+        "blocking_issues": ["Concrete issue 1 the architect must fix", "..."],
+        "suggestions": ["Optional nit 1", "..."],
         "strengths": ["..."],
         "weaknesses": ["..."]
       }
       ```
+
+      `blocking_issues` should be empty `[]` when the plan passes review (score
+      ≥ 90 with no must-fix items). Each item should be a single, actionable
+      sentence.
 
   # ── Review router ────────────────────────────────────────────────────────
   #
@@ -490,17 +599,22 @@ agents:
   #   Post: Routes to architect (revise) or plan_approval based on scores.
   - name: review_router
     type: script
-    description: Route based on combined review scores
+    description: Aggregate reviewer outputs and decide architect-revise vs plan_approval (5-revision cap, blocking-issue-aware)
     command: pwsh
     args:
       - "-NoProfile"
-      - "-Command"
-      - >-
-        $techScore = {{ technical_reviewer.output.score }};
-        $readScore = {{ readability_reviewer.output.score }};
-        $avg = [math]::Floor(($techScore + $readScore) / 2);
-        $pass = $avg -ge 90;
-        @{ average_score = $avg; technical_score = $techScore; readability_score = $readScore; passed = $pass } | ConvertTo-Json
+      - "-File"
+      # workflow.dir resolves to the directory of the running workflow file
+      # (engine/workflow.py:331). Required because conductor invokes pwsh
+      # from its own cwd, not the registry root, so 'scripts/foo.ps1' alone
+      # would not resolve at runtime.
+      - "{{ workflow.dir }}/../scripts/review-router.ps1"
+      - "-TechReviewerJson"
+      - "{{ review_group.outputs.technical_reviewer | tojson }}"
+      - "-ReadabilityReviewerJson"
+      - "{{ review_group.outputs.readability_reviewer | tojson }}"
+      - "-PriorCycleCount"
+      - "{{ context.history | select('equalto', 'review_router') | list | length }}"
     routes:
       - to: architect
         when: "{{ review_router.output.passed == false }}"
@@ -521,15 +635,31 @@ agents:
     prompt: |
       ## 📋 Plan Approval — Work Item {{ workflow.input.work_item_id }}
 
+      {% if review_router.output.forced_by_cap %}
+      > ⚠️ **Revision cap hit.** The architect produced 5 revisions but the
+      > combined review score is still **{{ review_router.output.average_score }}**/100
+      > with **{{ review_router.output.blocking_issue_count }} blocking issue(s)
+      > unresolved**. Routing has been forced to this gate so a human can
+      > decide. Review the outstanding blocking issues below carefully before
+      > approving.
+
+      ### Outstanding blocking issues
+
+      {{ review_router.output.combined_feedback }}
+      {% else %}
       The architect's plan has passed review with an average score of
-      **{{ review_router.output.average_score }}**/100.
+      **{{ review_router.output.average_score }}**/100
+      (after {{ review_router.output.revision_cycles_completed }} revision
+      cycle(s); {{ review_router.output.blocking_issue_count }} blocking
+      issue(s) at pass time).
+      {% endif %}
 
       ### Review Scores
 
       | Reviewer | Score | Feedback |
       |----------|-------|----------|
-      | Technical | {{ review_router.output.technical_score }} | {{ technical_reviewer.output.feedback }} |
-      | Readability | {{ review_router.output.readability_score }} | {{ readability_reviewer.output.feedback }} |
+      | Technical | {{ review_router.output.technical_score }} | {{ review_group.outputs.technical_reviewer.feedback }} |
+      | Readability | {{ review_router.output.readability_score }} | {{ review_group.outputs.readability_reviewer.feedback }} |
 
       ### Plan Summary
 
@@ -553,22 +683,45 @@ agents:
         value: reject
         route: $end
 
-  # ── Seeder agent ─────────────────────────────────────────────────────────
+  # ── Seeder script (P8 + P14) ─────────────────────────────────────────────
   #
-  # Creates child work items from the approved plan using the twig CLI.
-  # Uses type information from type_loader to determine appropriate child
-  # types. Routes to child_router for recursive planning of plannable children.
+  # Deterministic seeder. Consumes architect.output.tasks (structured array)
+  # and reconciles against existing children of the parent work item via
+  # marker-aware idempotent matching, then sets the polyphony:planned tag on
+  # the parent. Replaces the prior LLM seeder agent (which re-parsed plan
+  # markdown and produced duplicates on re-runs).
+  #
+  # Match precedence per task:
+  #   1. Existing child whose description contains
+  #      <!-- polyphony:plan-task-id=task-N --> matching the architect's id
+  #      → reused, no create.
+  #   2. Existing child with matching (title, type) under the parent → reused
+  #      with a warning (marker damaged or missing).
+  #   3. No match → create via `twig new`, embedding the marker as the last
+  #      line of description.
+  #
+  # On success (no errors), sets/merges `polyphony:planned` into the parent's
+  # System.Tags. The polyphony route command reads this tag to recognize the
+  # planned state without touching process-config.
   #
   # Invariants:
-  #   Pre:  Plan is approved; type_loader outputs available.
-  #   Post: Child work items are created in ADO; output.seeded_count is set.
+  #   Pre:  architect.output.tasks is a (possibly empty) array; type_loader
+  #         outputs available.
+  #   Post: Child work items exist in ADO with markers stamped; parent is
+  #         tagged polyphony:planned (only if no errors); output.seeded_count
+  #         + reused_count + error_count reflect the actual reconciliation.
   - name: seeder
-    type: agent
-    model: claude-sonnet-4.6
-    description: Create child work items from the approved plan
-    tools:
-      - twig
-    prompt: !file ../prompts/seeder-plan-level.md
+    type: script
+    description: Idempotent seeder — marker-aware reconciliation, sets polyphony:planned tag (P8, P14)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/seeder.ps1"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+      - "-TasksJson"
+      - "{{ architect.output.tasks | tojson }}"
     routes:
       - to: child_router
 
@@ -599,40 +752,9 @@ agents:
 
   # ── Plan children group (for_each) ──────────────────────────────────────
   #
-  # Self-recursion: invokes plan-level.yaml for each plannable child with
-  # depth+1. This enables any hierarchy depth to be planned with a single
-  # workflow file. Conductor enforces max_depth to prevent runaway recursion.
-  #
-  # Invariants:
-  #   Pre:  child_router.output.has_plannable_children == true.
-  #   Post: Each plannable child has been planned (or depth-limited).
-  - name: plan_children_group
-    for_each:
-      # Bare dotted path per M8 — Jinja `{{ }}` wrappers are rejected by
-      # `validate_source_format` (and even when accepted, are misleading).
-      source: child_router.output.plannable_children
-      as: child
-      max_concurrent: 3
-      failure_mode: continue_on_error
-      agent:
-        name: plan_child
-        type: workflow
-        workflow: ./plan-level.yaml
-        max_depth: 6
-        input_mapping:
-          work_item_id: "{{ child.id }}"
-          depth: "{{ workflow.input.depth + 1 }}"
-          max_depth: "{{ workflow.input.max_depth }}"
-          intent: "{{ workflow.input.intent }}"
-          user_plan_path: ""
-    routes:
-      # Per M8: parallel/for_each groups expose `outputs`/`errors`/`count`,
-      # NOT `failed_count`/`succeeded_count`. Derive failure presence from
-      # `errors | length`.
-      - to: plan_children_summary_gate
-        when: "{{ (plan_children_group.errors | length) > 0 }}"
-      - to: $end
-        when: "{{ (plan_children_group.errors | length) == 0 }}"
+  # Defined as a top-level `for_each:` block at the bottom of this file.
+  # Conductor's schema requires for_each groups to be siblings of `agents:`,
+  # NOT nested inside agents-list items — see the for_each: block below.
 
   # ── Plan children summary gate ───────────────────────────────────────────
   #
@@ -663,3 +785,79 @@ agents:
       - label: "✅ Acknowledge"
         value: acknowledge
         route: $end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Parallel groups
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Conductor's schema requires `parallel:` to be a top-level key (sibling of
+# `agents:`), NOT nested inside an agents-list item. Pydantic's AgentDef has
+# no `extra = "forbid"`, so misnesting silently drops the parallel field and
+# the wrapper is treated as a no-op `type: agent` that defaults to gpt-4o.
+# See dogfood_findings #8 (polyphony fix) and #9 (conductor schema hardening).
+
+parallel:
+  # ── Review group ─────────────────────────────────────────────────────────
+  #
+  # Runs technical and readability reviews in parallel. Both reviewers
+  # score the plan 0-100 independently. Uses fail_fast to abort early
+  # if either reviewer encounters an error.
+  #
+  # Invariants:
+  #   Pre:  architect.output.plan is a complete plan artifact.
+  #   Post: Both reviewers have produced scores and feedback.
+  - name: review_group
+    description: Parallel plan review (technical + readability)
+    agents:
+      - technical_reviewer
+      - readability_reviewer
+    failure_mode: fail_fast
+    routes:
+      - to: review_router
+
+# ─────────────────────────────────────────────────────────────────────────────
+# For-each groups
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Same constraint as parallel: must be a top-level key. Each entry requires
+# `type: for_each` as a discriminator (see ForEachDef.type in schema.py).
+
+for_each:
+  # ── Plan children group ──────────────────────────────────────────────────
+  #
+  # Self-recursion: invokes plan-level.yaml for each plannable child with
+  # depth+1. This enables any hierarchy depth to be planned with a single
+  # workflow file. Conductor enforces max_depth to prevent runaway recursion.
+  #
+  # Invariants:
+  #   Pre:  child_router.output.has_plannable_children == true.
+  #   Post: Each plannable child has been planned (or depth-limited).
+  - name: plan_children_group
+    type: for_each
+    description: Recursive per-child planning
+    # Bare dotted path per M8 — Jinja `{{ }}` wrappers are rejected by
+    # `validate_source_format` (and even when accepted, are misleading).
+    source: child_router.output.plannable_children
+    as: child
+    max_concurrent: 3
+    failure_mode: continue_on_error
+    agent:
+      name: plan_child
+      type: workflow
+      workflow: ./plan-level.yaml
+      max_depth: 6
+      input_mapping:
+        work_item_id: "{{ child.id }}"
+        depth: "{{ workflow.input.depth + 1 }}"
+        max_depth: "{{ workflow.input.max_depth }}"
+        intent: "{{ workflow.input.intent }}"
+        user_plan_path: ""
+    routes:
+      # Per M8: parallel/for_each groups expose `outputs`/`errors`/`count`,
+      # NOT `failed_count`/`succeeded_count`. Derive failure presence from
+      # `errors | length`.
+      - to: plan_children_summary_gate
+        when: "{{ (plan_children_group.errors | length) > 0 }}"
+      - to: $end
+        when: "{{ (plan_children_group.errors | length) == 0 }}"

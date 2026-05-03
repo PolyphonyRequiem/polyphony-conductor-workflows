@@ -152,30 +152,11 @@ agents:
       - "-Intent"
       - "resume"
     routes:
-      - to: work_tree_seeder
-        when: "{{ seed_check.output.phase == 'needs_seeding' }}"
       - to: $end
         when: "{{ seed_check.output.phase == 'ready_for_implementation' }}"
       # Catch-all: detect-state.ps1 may return other phases (done, removed,
-      # error, needs_planning, in_progress, etc.); route to $end rather than
-      # crash with ValueError. See conductor-mechanics M4.
-      - to: $end
-
-  # ── Work tree seeder ───────────────────────────────────────────────────
-  #
-  # Seeds the work tree from the plan if not already seeded. Uses the
-  # twig CLI to create and publish child work items based on the approved
-  # plan artifact.
-  #
-  # Invariants:
-  #   Pre:  seed_check.output.phase == 'needs_seeding'.
-  #   Post: Child work items are created in ADO; output.seeded_count is set.
-  - name: work_tree_seeder
-    type: agent
-    model: claude-sonnet-4.6
-    description: Seed child work items from the approved plan
-    tools:
-      - twig
-    prompt: !file ../prompts/seeder-work-tree.md
-    routes:
+      # error, needs_planning, needs_seeding, in_progress, etc.); route to
+      # $end rather than crash with ValueError. The outer polyphony-full
+      # loop will re-detect and re-route on the next iteration if state
+      # is still unresolved. See conductor-mechanics M4.
       - to: $end

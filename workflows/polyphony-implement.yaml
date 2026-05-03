@@ -194,43 +194,9 @@ agents:
 
   # ── PG execution group (for_each) ──────────────────────────────────────
   #
-  # Parallel PG execution: spawns one implement-pg.yaml sub-workflow per
-  # pending PG from the pg_dispatcher output. Each PG operates on its own
-  # branch independently. Merge conflicts are resolved by the implementing
-  # agent via rebase.
-  #
-  # Invariants:
-  #   Pre:  pg_dispatcher.output.pgs is a non-empty array of PG descriptors.
-  #   Post: Each PG has been implemented, PR'd, and merged (or failed).
-  - name: pg_execution_group
-    for_each:
-      # `source:` is a bare dotted path, NOT a Jinja expression. Wrapping
-      # in {{ }} causes config-load rejection. See conductor-mechanics M8.
-      source: pg_dispatcher.output.pgs
-      as: pg
-      max_concurrent: 3
-      failure_mode: fail_fast
-      agent:
-        name: implement_pg
-        type: workflow
-        workflow: ./implement-pg.yaml
-        input_mapping:
-          work_item_id: "{{ workflow.input.work_item_id }}"
-          pg_number: "{{ pg.number }}"
-          work_item_ids: "{{ pg.work_item_ids }}"
-          branch_name: "{{ pg.branch_name }}"
-          feature_branch: "{{ pg.feature_branch }}"
-          platform: "{{ workflow.input.platform }}"
-    routes:
-      # Group results expose `errors` / `outputs` / `count`. There is no
-      # `failed_count` / `succeeded_count` aggregate — derive from
-      # `errors | length`. See conductor-mechanics M8.
-      - to: pg_summary_gate
-        when: "{{ (pg_execution_group.errors | length) > 0 }}"
-      - to: $end
-        when: "{{ (pg_execution_group.errors | length) == 0 }}"
-      # Catch-all guards against unexpected group state.
-      - to: pg_summary_gate
+  # Defined as a top-level `for_each:` block at the bottom of this file.
+  # Conductor's schema requires for_each groups to be siblings of `agents:`,
+  # NOT nested inside agents-list items — see the for_each: block below.
 
   # ── PG summary gate (human decision point) ─────────────────────────────
   #
@@ -266,3 +232,57 @@ agents:
       - label: "🛑 Abort"
         value: abort
         route: $end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# For-each groups
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Conductor's schema requires `for_each:` to be a top-level key (sibling of
+# `agents:`), NOT nested inside an agents-list item. Pydantic's AgentDef has
+# no `extra = "forbid"`, so misnesting silently drops the for_each field and
+# the wrapper is treated as a no-op `type: agent` that defaults to gpt-4o.
+# See dogfood_findings #8 (polyphony fix) and microsoft/conductor#140
+# (schema hardening).
+
+for_each:
+  # ── PG execution group ───────────────────────────────────────────────────
+  #
+  # Parallel PG execution: spawns one implement-pg.yaml sub-workflow per
+  # pending PG from the pg_dispatcher output. Each PG operates on its own
+  # branch independently. Merge conflicts are resolved by the implementing
+  # agent via rebase.
+  #
+  # Invariants:
+  #   Pre:  pg_dispatcher.output.pgs is a non-empty array of PG descriptors.
+  #   Post: Each PG has been implemented, PR'd, and merged (or failed).
+  - name: pg_execution_group
+    type: for_each
+    description: Parallel per-PG implementation
+    # `source:` is a bare dotted path, NOT a Jinja expression. Wrapping
+    # in {{ }} causes config-load rejection. See conductor-mechanics M8.
+    source: pg_dispatcher.output.pgs
+    as: pg
+    max_concurrent: 3
+    failure_mode: fail_fast
+    agent:
+      name: implement_pg
+      type: workflow
+      workflow: ./implement-pg.yaml
+      input_mapping:
+        work_item_id: "{{ workflow.input.work_item_id }}"
+        pg_number: "{{ pg.number }}"
+        work_item_ids: "{{ pg.work_item_ids }}"
+        branch_name: "{{ pg.branch_name }}"
+        feature_branch: "{{ pg.feature_branch }}"
+        platform: "{{ workflow.input.platform }}"
+    routes:
+      # Group results expose `errors` / `outputs` / `count`. There is no
+      # `failed_count` / `succeeded_count` aggregate — derive from
+      # `errors | length`. See conductor-mechanics M8.
+      - to: pg_summary_gate
+        when: "{{ (pg_execution_group.errors | length) > 0 }}"
+      - to: $end
+        when: "{{ (pg_execution_group.errors | length) == 0 }}"
+      # Catch-all guards against unexpected group state.
+      - to: pg_summary_gate
