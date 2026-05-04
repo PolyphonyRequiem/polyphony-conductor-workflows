@@ -297,8 +297,7 @@ agents:
   #         the work needed.
   - name: remediation_planner
     type: agent
-    model: gpt-5
-    context_window: 1000000
+    model: claude-sonnet-4.6
     description: Create addendum plan from review feedback for remediation
     tools:
       - twig
@@ -384,7 +383,7 @@ agents:
   #   Post: New work items are created in ADO; output.work_item_ids is set.
   - name: remediation_seeder
     type: agent
-    model: gpt-4o
+    model: claude-sonnet-4.6
     description: Create ADO work items for remediation tasks
     tools:
       - twig
@@ -474,7 +473,7 @@ agents:
   #         pr_platform_router for the next review cycle.
   - name: feature_pr_updater
     type: agent
-    model: gpt-4o
+    model: claude-sonnet-4.6
     description: Re-request review on the feature PR after remediation
     tools:
       - gh
